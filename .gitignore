@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Результати генерації
+output/
+
+# Профілі генерації для груп: містять посилання на таблиці зі справжніми даними студентів
+templates/*/batch.json
+
+# Тимчасові файли атомарного запису
+*.tmp
+.*.tmp
+
+# Редактори та ОС
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

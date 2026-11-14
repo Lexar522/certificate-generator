@@ -1,0 +1,200 @@
+{
+  "name": "Default Tech",
+  "date_format": "%d.%m.%Y",
+  "canvas": {
+    "width": 2480,
+    "height": 1754,
+    "background_color": "#0B1736",
+    "background_image": "assets/background.png"
+  },
+  "output": {
+    "format": "jpg",
+    "quality": 92,
+    "dpi": 300
+  },
+  "field_labels": {
+    "birth_date": "Дата народження"
+  },
+  "layers": [
+    {
+      "id": "brand_watermark",
+      "label": "Водяний знак",
+      "type": "watermark",
+      "path": "assets/watermark.png",
+      "x": 745,
+      "y": 382,
+      "scale": 1.1,
+      "opacity": 0.1
+    },
+    {
+      "id": "school_logo",
+      "label": "Логотип",
+      "type": "image",
+      "path": "assets/logo.png",
+      "x": 1130,
+      "y": 150,
+      "width": 220
+    },
+    {
+      "id": "title",
+      "label": "Заголовок",
+      "type": "text",
+      "text": "Сертифікат",
+      "uppercase": true,
+      "font": "fonts/NotoSans-Bold.ttf",
+      "font_size": 120,
+      "color": "#E9B84C",
+      "align": "center",
+      "x": 1240,
+      "y": 400
+    },
+    {
+      "id": "subtitle",
+      "label": "Підзаголовок",
+      "type": "text",
+      "text": "цим засвідчується, що",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 52,
+      "color": "#FFFFFFB3",
+      "align": "center",
+      "x": 1240,
+      "y": 580
+    },
+    {
+      "id": "full_name",
+      "label": "ПІБ отримувача",
+      "type": "text",
+      "required": true,
+      "font": "fonts/NotoSans-Bold.ttf",
+      "font_size": 130,
+      "min_font_size": 70,
+      "color": "#FFFFFF",
+      "align": "center",
+      "x": 1240,
+      "y": 650,
+      "max_width": 1900,
+      "overflow": "shrink"
+    },
+    {
+      "id": "birth_line",
+      "label": "Рядок з датою народження",
+      "type": "text",
+      "text": "дата народження: {birth_date}",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 40,
+      "color": "#FFFFFFB3",
+      "align": "center",
+      "x": 1240,
+      "y": 818
+    },
+    {
+      "id": "course_intro",
+      "label": "Текст перед курсом",
+      "type": "text",
+      "text": "успішно завершив(-ла) навчальний курс",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 48,
+      "color": "#FFFFFFB3",
+      "align": "center",
+      "x": 1240,
+      "y": 890
+    },
+    {
+      "id": "course_name",
+      "label": "Назва курсу",
+      "type": "text",
+      "required": true,
+      "font": "fonts/NotoSans-Bold.ttf",
+      "font_size": 86,
+      "color": "#00C2CB",
+      "align": "center",
+      "x": 1240,
+      "y": 965,
+      "max_width": 1700,
+      "overflow": "wrap",
+      "line_spacing": 1.25
+    },
+    {
+      "id": "issue_date",
+      "label": "Дата видачі",
+      "type": "text",
+      "text": "Дата видачі: {issue_date}",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 42,
+      "color": "#FFFFFF",
+      "align": "left",
+      "x": 230,
+      "y": 1420
+    },
+    {
+      "id": "certificate_number",
+      "label": "Номер сертифіката",
+      "type": "text",
+      "text": "№ {certificate_id}",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 36,
+      "color": "#FFFFFF99",
+      "align": "left",
+      "x": 230,
+      "y": 1490
+    },
+    {
+      "id": "instructor_sign",
+      "label": "Підпис викладача",
+      "type": "image",
+      "x": 1050,
+      "y": 1250,
+      "width": 380,
+      "height": 160,
+      "keep_aspect": true
+    },
+    {
+      "id": "instructor_name",
+      "label": "ПІБ викладача",
+      "type": "text",
+      "font": "fonts/NotoSans-Bold.ttf",
+      "font_size": 40,
+      "color": "#FFFFFF",
+      "align": "center",
+      "x": 1240,
+      "y": 1430
+    },
+    {
+      "id": "instructor_caption",
+      "label": "Підпис «Викладач курсу»",
+      "type": "text",
+      "text": "Викладач курсу",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 32,
+      "color": "#FFFFFF99",
+      "align": "center",
+      "x": 1240,
+      "y": 1490
+    },
+    {
+      "id": "verify_qr",
+      "label": "QR-код перевірки",
+      "type": "qr",
+      "x": 1960,
+      "y": 1210,
+      "size": 300,
+      "url_template": "https://verify.example.com/certificates/{certificate_id}",
+      "fill_color": "#0B1736",
+      "back_color": "#FFFFFF",
+      "border": 2,
+      "error_correction": "M"
+    },
+    {
+      "id": "qr_caption",
+      "label": "Підпис під QR-кодом",
+      "type": "text",
+      "text": "Скануйте для перевірки",
+      "font": "fonts/NotoSans-Regular.ttf",
+      "font_size": 28,
+      "color": "#FFFFFF99",
+      "align": "center",
+      "x": 2110,
+      "y": 1525
+    }
+  ]
+}
