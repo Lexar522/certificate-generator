@@ -70,7 +70,7 @@ macOS, генерація сертифікатів для цілої групи 
 в будь-якому графічному середовищі).
 
 ```bash
-git clone https://github.com/<ваш-акаунт>/certificate-generator.git
+git clone https://github.com/Lexar522/certificate-generator.git
 ```
 
 ```bash
