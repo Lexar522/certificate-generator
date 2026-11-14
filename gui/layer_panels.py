@@ -1,21 +1,26 @@
 """Панелі інспектора для кожного типу шару та для документа в цілому."""
 
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QSize
+from PySide6.QtCore import QDate, QSize, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QComboBox, QDateEdit, QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget
 
 from core.exceptions import CertificateError
 from core.models import ImageLayer, QrLayer, TextLayer, WatermarkLayer
 from core.template_store import import_asset
-from gui.document import new_certificate_id
+from gui import theme
+from gui.document import EditorDocument, new_certificate_id
 from gui.inspector_base import InspectorContext, Panel
-from gui.qt_utils import TYPE_NAMES, line_icon, type_icon
+from gui.qt_utils import TYPE_NAMES, line_icon, pil_to_pixmap, type_icon
 from gui.widgets import hbox
+from renderers.pillow_renderer import PillowRenderer
 
 FONT_SUFFIXES = {".ttf", ".otf"}
 MAX_COORD = 10_000
+BACKGROUND_PREVIEW_HEIGHT = 150
 
 
 def template_fonts(template_dir: Path) -> list[str]:
@@ -33,6 +38,25 @@ def _file_name(path: str | None, empty: str) -> str:
     return Path(path).name if path else empty
 
 
+def choose_background(doc: EditorDocument, pick_image: Callable[[], Path | None]) -> bool:
+    """Діалог вибору → копія файлу в шаблон → новий фон. False — користувач скасував вибір."""
+    path = pick_image()
+    if path is None:
+        return False
+    doc.update_canvas({"background_image": import_asset(doc.template_dir, path, "assets")})
+    return True
+
+
+def _background_thumbnail(doc: EditorDocument, width: int) -> QPixmap:
+    """Мініатюра фону сторінки (з урахуванням способу вписування) для інспектора."""
+    try:
+        image = PillowRenderer().render_background(doc.config.canvas, doc.template_dir)
+    except CertificateError:
+        return QPixmap()
+    image.thumbnail((width, BACKGROUND_PREVIEW_HEIGHT))
+    return pil_to_pixmap(image)
+
+
 # ---------------------------------------------------------------------- #
 # Документ (нічого не виділено)
 # ---------------------------------------------------------------------- #
@@ -42,10 +66,49 @@ class DocumentPanel(Panel):
     def __init__(self, ctx: InspectorContext) -> None:
         super().__init__(ctx)
         self.body.addWidget(_header("Документ", self.doc.config.name, None))
+        self._build_background()
         self._build_certificate()
         self._build_canvas()
         self._build_export()
         self.finish()
+
+    def _build_background(self) -> None:
+        doc = self.doc
+        section = self.section("Фон сторінки")
+
+        preview = QLabel()
+        preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        preview.setFixedHeight(BACKGROUND_PREVIEW_HEIGHT)
+        preview.setStyleSheet(f"border-radius: 8px; background: {theme.CONTROL_FILL};")
+        self.on_bind(lambda: preview.setPixmap(_background_thumbnail(doc, preview.width() or 300)))
+        section.add_full(preview)
+        section.add_full(self.caption(lambda: _file_name(doc.config.canvas.background_image, "Без зображення — лише колір")))
+
+        choose = QPushButton("Обрати зображення…")
+        choose.setObjectName("Accent")
+        choose.clicked.connect(lambda: self.guard(lambda: choose_background(doc, self.ctx.pick_image)))
+        clear = QPushButton("Прибрати")
+        clear.clicked.connect(lambda: self.guard(lambda: doc.update_canvas({"background_image": None})))
+        self.visible_when(lambda: doc.config.canvas.background_image is not None, clear)
+        section.add_full(hbox(choose, clear, stretch_first=True))
+
+        fit = self.segmented(
+            [("cover", "Заповнити"), ("contain", "Вмістити"), ("stretch", "Розтягнути")],
+            lambda: doc.config.canvas.background_fit,
+            lambda v: doc.update_canvas({"background_fit": v}),
+        )
+        fit_caption = section.add_row("Як вписати", fit)
+        self.visible_when(lambda: doc.config.canvas.background_image is not None, fit, fit_caption)
+        section.add_row(
+            "Колір фону",
+            self.color(lambda: doc.config.canvas.background_color, lambda v: doc.update_canvas({"background_color": v})),
+        )
+        section.add_full(
+            self.hint(
+                "«Заповнити» — без порожніх країв, зайве обрізається; «Вмістити» — видно все зображення, "
+                "краї заповнює колір фону. Підійде будь-який JPG/PNG; файл копіюється в шаблон."
+            )
+        )
 
     def _build_certificate(self) -> None:
         doc = self.doc
@@ -81,24 +144,7 @@ class DocumentPanel(Panel):
         width = self.spin(lambda: doc.config.canvas.width, lambda v: doc.update_canvas({"width": v}, "canvas:w"), 1, MAX_COORD, " px")
         height = self.spin(lambda: doc.config.canvas.height, lambda v: doc.update_canvas({"height": v}, "canvas:h"), 1, MAX_COORD, " px")
         section.add_row("Розмір", hbox(width, QLabel("×"), height, stretch_first=False))
-        section.add_row(
-            "Колір фону",
-            self.color(lambda: doc.config.canvas.background_color, lambda v: doc.update_canvas({"background_color": v})),
-        )
-
-        choose = QPushButton("Обрати…")
-        choose.clicked.connect(lambda: self.guard(self._choose_background))
-        clear = QPushButton("Прибрати")
-        clear.clicked.connect(lambda: self.guard(lambda: doc.update_canvas({"background_image": None})))
-        name = self.caption(lambda: _file_name(doc.config.canvas.background_image, "Немає"))
-        section.add_row("Фонове зображення", name)
-        section.add_full(hbox(QWidget(), choose, clear))
-
-    def _choose_background(self) -> None:
-        path = self.ctx.pick_image()
-        if path is not None:
-            relative = import_asset(self.doc.template_dir, path, "assets")
-            self.doc.update_canvas({"background_image": relative})
+        section.add_full(self.hint("A4 при 300 DPI: 2480 × 1754 (горизонтально) або 1754 × 2480 (вертикально)."))
 
     def _build_export(self) -> None:
         doc = self.doc

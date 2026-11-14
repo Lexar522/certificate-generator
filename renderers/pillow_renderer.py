@@ -102,8 +102,14 @@ class PillowRenderer(BaseRenderer):
             return base
 
         path = resolve_template_asset(template_dir, canvas_config.background_image)
-        background = ImageOps.fit(open_rgba(path, "canvas.background_image"), size)
-        return Image.alpha_composite(base, background)
+        picture = open_rgba(path, "canvas.background_image")
+        if canvas_config.background_fit == "stretch":
+            return Image.alpha_composite(base, picture.resize(size, Image.Resampling.LANCZOS))
+        if canvas_config.background_fit == "contain":
+            fitted = ImageOps.contain(picture, size, Image.Resampling.LANCZOS)
+            offset = ((size[0] - fitted.width) // 2, (size[1] - fitted.height) // 2)
+            return composite_at(base, LayerSprite(fitted, *offset))
+        return Image.alpha_composite(base, ImageOps.fit(picture, size, Image.Resampling.LANCZOS))
 
     def render_layer(self, layer: AnyLayer, context: RenderContext) -> LayerSprite | None:
         """Спрайт шару з урахуванням opacity та rotation; None — якщо шару нема що показати."""

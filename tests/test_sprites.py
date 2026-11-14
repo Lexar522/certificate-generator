@@ -1,6 +1,14 @@
+import pytest
 from PIL import Image
 
-from renderers.pillow_renderer import LayerSprite, _apply_opacity, _apply_rotation, composite_at
+from core.models import CanvasConfig
+from renderers.pillow_renderer import (
+    LayerSprite,
+    PillowRenderer,
+    _apply_opacity,
+    _apply_rotation,
+    composite_at,
+)
 
 
 def test_rotation_keeps_sprite_center():
@@ -34,3 +42,22 @@ def test_composite_ignores_fully_offscreen_sprite():
     canvas = Image.new("RGBA", (10, 10))
     sprite = LayerSprite(Image.new("RGBA", (5, 5), (255, 0, 0, 255)), 50, 50)
     assert composite_at(canvas, sprite) is canvas
+
+
+@pytest.mark.parametrize(
+    "fit, corner, center",
+    [
+        ("cover", (255, 0, 0, 255), (255, 0, 0, 255)),  # без порожніх країв
+        ("contain", (0, 0, 255, 255), (255, 0, 0, 255)),  # краї — колір фону
+        ("stretch", (255, 0, 0, 255), (255, 0, 0, 255)),
+    ],
+)
+def test_background_fit_modes(tmp_path, fit, corner, center):
+    Image.new("RGB", (50, 100), (255, 0, 0)).save(tmp_path / "bg.png")  # вертикальне фото
+    canvas = CanvasConfig(
+        width=200, height=100, background_color="#0000FF", background_image="bg.png", background_fit=fit
+    )
+    page = PillowRenderer().render_background(canvas, tmp_path)
+    assert page.size == (200, 100)
+    assert page.getpixel((2, 50)) == corner
+    assert page.getpixel((100, 50)) == center

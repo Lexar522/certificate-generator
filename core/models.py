@@ -75,6 +75,10 @@ class CanvasConfig(_FrozenModel):
     height: Dimension
     background_color: HexColor = "#FFFFFF"
     background_image: RelativePath | None = None
+    background_fit: Literal["cover", "contain", "stretch"] = Field(
+        default="cover",
+        description="cover — заповнити з обрізанням; contain — вмістити повністю; stretch — розтягнути",
+    )
 
 
 class OutputConfig(_FrozenModel):

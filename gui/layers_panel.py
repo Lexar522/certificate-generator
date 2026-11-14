@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QPushButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -84,6 +85,8 @@ class LayersPanel(QWidget):
     reorder_requested = Signal(int)
     order_changed = Signal(list)  # id згори донизу, як у списку
     context_menu_requested = Signal(QPoint)
+    background_requested = Signal()  # відкрити налаштування фону сторінки
+    background_image_requested = Signal()  # одразу обрати фонове зображення
 
     def __init__(self) -> None:
         super().__init__()
@@ -115,7 +118,21 @@ class LayersPanel(QWidget):
         hint.setObjectName("Hint")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(hint)
+
+        # Фон — не шар, тож закріплений окремо під списком (як «Background» у Keynote/Figma).
+        background = QPushButton("  Фон сторінки")
+        background.setIcon(type_icon("image"))
+        background.setIconSize(QSize(20, 20))
+        background.setToolTip("Фонове зображення, колір і розмір сторінки")
+        background.setCursor(Qt.CursorShape.PointingHandCursor)
+        background.setStyleSheet("text-align: left; padding: 7px 10px; font-weight: 600;")
+        background.clicked.connect(self._open_background)
+        layout.addWidget(background)
         layout.addWidget(self._build_toolbar())
+
+    def _open_background(self) -> None:
+        self.select(None)
+        self.background_requested.emit()
 
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
@@ -130,6 +147,8 @@ class LayersPanel(QWidget):
         for kind in ADD_ORDER:
             action = menu.addAction(type_icon(kind), TYPE_NAMES[kind])
             action.triggered.connect(lambda _=False, k=kind: self.add_requested.emit(k))
+        menu.addSeparator()
+        menu.addAction(type_icon("image"), "Фонове зображення…", self.background_image_requested.emit)
         add.setMenu(menu)
         add.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         row.addWidget(add)

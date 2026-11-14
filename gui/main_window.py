@@ -34,7 +34,7 @@ from gui.canvas import CanvasView, CertificateScene
 from gui.document import EditorDocument
 from gui.inspector_base import InspectorContext, Panel
 from gui.layer_actions import layer_subtitle, new_layer_payload, scaled_layer_changes
-from gui.layer_panels import build_panel
+from gui.layer_panels import build_panel, choose_background
 from gui.layers_panel import LayersPanel
 from gui.qt_utils import line_icon, pil_to_pixmap, placeholder_pixmap
 from gui.toast import Toast
@@ -216,6 +216,8 @@ class MainWindow(QMainWindow):
         )
         self._view.context_menu_requested.connect(self._show_layer_menu)
         self._layers.context_menu_requested.connect(self._show_layer_menu)
+        self._layers.background_requested.connect(self._show_background_settings)
+        self._layers.background_image_requested.connect(self._choose_background)
         self._view.zoom_changed.connect(lambda zoom: self._zoom_label.setText(f"{zoom * 100:.0f}%"))
         self._template_box.currentIndexChanged.connect(self._switch_template)
 
@@ -364,6 +366,22 @@ class MainWindow(QMainWindow):
         dx = round(page.center().x() - rect.center().x()) if axis == "horizontal" else 0
         dy = round(page.center().y() - rect.center().y()) if axis == "vertical" else 0
         self._doc.move_layer_by(layer_id, dx, dy)
+
+    def _show_background_settings(self) -> None:
+        self._select(None)
+        self._inspector.verticalScrollBar().setValue(0)  # розділ «Фон сторінки» — першим
+
+    def _choose_background(self) -> None:
+        try:
+            chosen = choose_background(self._doc, self._pick_image)
+        except CertificateError as exc:
+            self._show_error(str(exc))
+            return
+        self._show_background_settings()
+        if chosen:
+            self._toast.show_message(
+                "Фон оновлено. Спосіб вписування — праворуч у «Фон сторінки».", "success", "Скасувати", self._doc.undo
+            )
 
     def _activate_layer(self, layer_id: str) -> None:
         self._select(layer_id)
