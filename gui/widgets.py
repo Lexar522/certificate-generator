@@ -63,7 +63,7 @@ class Switch(QAbstractButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         width, height = self.TRACK_SIZE.width(), self.TRACK_SIZE.height()
-        off, on = QColor(theme.CONTROL_FILL).darker(108), QColor("#34C759")
+        off, on = QColor(theme.CONTROL_FILL).darker(108), QColor(theme.ACCENT)
         track = QColor(
             round(off.red() + (on.red() - off.red()) * self._offset),
             round(off.green() + (on.green() - off.green()) * self._offset),
@@ -95,9 +95,9 @@ class Segmented(QFrame):
                 background: transparent; border: 1px solid transparent; border-radius: 6px;
                 padding: 3px 6px; min-height: 16px; color: {theme.TEXT};
             }}
-            QFrame#Segmented QPushButton:hover {{ background: rgba(255,255,255,0.5); }}
+            QFrame#Segmented QPushButton:hover {{ background: {theme.ROW_HOVER}; }}
             QFrame#Segmented QPushButton:checked {{
-                background: white; border: 1px solid rgba(0,0,0,0.08); font-weight: 600;
+                background: {theme.SURFACE}; border: 1px solid {theme.HAIRLINE}; font-weight: 600;
             }}
             """
         )

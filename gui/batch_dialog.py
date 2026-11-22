@@ -55,7 +55,14 @@ GENERATE_BUTTON_MIN_WIDTH = 240
 
 
 class BatchDialog(QDialog):
-    def __init__(self, doc: EditorDocument, project_root: Path, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        doc: EditorDocument,
+        project_root: Path,
+        parent: QWidget | None = None,
+        initial_source: str | None = None,
+    ) -> None:
+        """initial_source — таблиця, перетягнута на полотно; має пріоритет над збереженою в профілі."""
         super().__init__(parent)
         self.setWindowTitle("Генерація для групи")
         self.resize(1180, 780)
@@ -75,8 +82,9 @@ class BatchDialog(QDialog):
 
         self._build_ui()
         self._apply_profile_to_output_controls()
-        if self._profile.source:
-            self._source.setText(self._profile.source)
+        source = initial_source or self._profile.source
+        if source:
+            self._source.setText(source)
             self._load_source()
 
     # ------------------------------------------------------------------ #
@@ -198,17 +206,6 @@ class BatchDialog(QDialog):
         self._preview.setAlternatingRowColors(False)
         self._preview.setShowGrid(False)
         self._preview.horizontalHeader().setStretchLastSection(True)
-        self._preview.setStyleSheet(
-            f"""
-            QTableWidget {{ background: {theme.SURFACE}; border: 1px solid {theme.HAIRLINE}; border-radius: 12px; }}
-            QHeaderView::section {{
-                background: {theme.SIDEBAR}; border: none; border-bottom: 1px solid {theme.HAIRLINE};
-                padding: 6px 8px; font-weight: 600; color: {theme.TEXT_SECONDARY};
-            }}
-            QTableWidget::item {{ padding: 4px 8px; border-bottom: 1px solid #F0F0F3; }}
-            QTableWidget::item:selected {{ background: rgba(0,113,227,0.12); color: {theme.TEXT}; }}
-            """
-        )
         layout.addWidget(self._preview, 1)
         return container
 
@@ -218,10 +215,6 @@ class BatchDialog(QDialog):
         self._progress = QProgressBar()
         self._progress.setTextVisible(False)
         self._progress.setFixedHeight(6)
-        self._progress.setStyleSheet(
-            f"QProgressBar {{ background: {theme.CONTROL_FILL}; border: none; border-radius: 3px; }}"
-            f"QProgressBar::chunk {{ background: {theme.ACCENT}; border-radius: 3px; }}"
-        )
         self._progress.hide()
         self._progress_label = QLabel()
         self._progress_label.setObjectName("Caption")

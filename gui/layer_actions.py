@@ -1,14 +1,17 @@
 """Дії над шарами, які потребують рендерера чи діалогів: нові шари, масштабування, підписи."""
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
+from core.exceptions import CertificateError
 from core.models import ImageLayer, QrLayer, TextLayer, WatermarkLayer
+from core.template_loader import resolve_template_asset
 from core.template_store import import_asset
-from gui.document import EditorDocument
+from gui.document import LAYER_TYPES, EditorDocument
 from gui.layer_panels import template_fonts
 from gui.layout_ops import resize_changes
 from gui.qt_utils import TYPE_NAMES
@@ -79,8 +82,11 @@ def _picture_payload(
     kind: str, doc: EditorDocument, center_x: int, center_y: int, pick_image: PathPicker
 ) -> dict | None:
     path = pick_image()
-    if path is None:
-        return None
+    return None if path is None else picture_payload_from_file(kind, doc, path, center_x, center_y)
+
+
+def picture_payload_from_file(kind: str, doc: EditorDocument, path: Path, center_x: int, center_y: int) -> dict:
+    """Шар image/watermark з файлу, центрований у точці (center_x, center_y); файл копіюється в шаблон."""
     relative = import_asset(doc.template_dir, path, "assets")
     with Image.open(doc.template_dir / relative) as image:
         width, height = image.size
@@ -156,3 +162,45 @@ def layer_subtitle(layer: AnyLayer, doc: EditorDocument) -> str:
     if isinstance(layer, QrLayer):
         return layer.url_template.replace("{certificate_id}", "…").removeprefix("https://")
     return ""
+
+
+# ---------------------------------------------------------------------- #
+# Копіювання / вставка шарів (у т. ч. між шаблонами)
+# ---------------------------------------------------------------------- #
+
+CLIPBOARD_MIME = "application/x-certificate-layer"
+PASTE_OFFSET = 40
+MAX_CLIPBOARD_BYTES = 256 * 1024
+_ASSET_FIELDS = {"image": ("path", "assets"), "watermark": ("path", "assets"), "text": ("font", "fonts")}
+
+
+def layer_to_clipboard(layer: AnyLayer, doc: EditorDocument) -> bytes:
+    payload = {"layer": layer.model_dump(mode="json"), "template_dir": str(doc.template_dir.resolve())}
+    return json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+
+def paste_payload(raw: bytes, doc: EditorDocument) -> dict:
+    """Опис шару з буфера обміну, готовий до add_layer; файли з іншого шаблону копіюються в поточний.
+
+    Буфер міг заповнити будь-який застосунок, тож дані перевіряються як зовнішні.
+    """
+    if len(raw) > MAX_CLIPBOARD_BYTES:
+        raise CertificateError("У буфері обміну завеликий фрагмент")
+    try:
+        clip = json.loads(raw.decode("utf-8"))
+        layer = dict(clip["layer"])
+        source_dir = Path(clip["template_dir"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise CertificateError("У буфері обміну немає шару сертифіката") from exc
+    kind = layer.get("type")
+    if kind not in LAYER_TYPES:
+        raise CertificateError(f"Невідомий тип шару в буфері: {kind}")
+
+    asset = _ASSET_FIELDS.get(kind)
+    relative = layer.get(asset[0]) if asset else None
+    if relative and source_dir.resolve() != doc.template_dir.resolve():
+        source_file = resolve_template_asset(source_dir, relative)  # без виходу за межі шаблону-джерела
+        layer[asset[0]] = import_asset(doc.template_dir, source_file, asset[1])
+
+    layer.pop("id", None)
+    return layer | {"x": int(layer.get("x", 0)) + PASTE_OFFSET, "y": int(layer.get("y", 0)) + PASTE_OFFSET}

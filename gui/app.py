@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from core.exceptions import CertificateError
 from gui.main_window import MainWindow
+from gui.settings import load_settings
 from gui.theme import apply_theme
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -19,10 +20,11 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     app = QApplication(sys.argv)
     app.setApplicationName("Сертифікати")
-    apply_theme(app)
+    settings = load_settings()
+    apply_theme(app, settings.theme_mode, settings.accent)  # до створення вікна — без «блимання» теми
 
     try:
-        window = MainWindow(TEMPLATES_DIR, OUTPUT_DIR)
+        window = MainWindow(TEMPLATES_DIR, OUTPUT_DIR, settings)
     except CertificateError as exc:
         QMessageBox.critical(None, "Не вдалося запустити", str(exc))
         return 1

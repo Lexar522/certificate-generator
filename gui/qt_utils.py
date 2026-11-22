@@ -1,5 +1,6 @@
 """Конвертація Pillow → Qt та намальовані іконки (без зовнішніх файлів)."""
 
+import math
 from collections.abc import Callable
 
 from PIL import Image
@@ -30,13 +31,13 @@ def pil_to_pixmap(image: Image.Image) -> QPixmap:
     return QPixmap.fromImage(qimage.copy())  # copy: QImage не володіє буфером bytes
 
 
-def placeholder_pixmap(width: int, height: int, caption: str, color: str = theme.ACCENT) -> QPixmap:
+def placeholder_pixmap(width: int, height: int, caption: str, color: str | None = None) -> QPixmap:
     """Пунктирна рамка з підписом — для змінних зображень і шарів з помилкою."""
     pixmap = QPixmap(max(1, width), max(1, height))
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    accent = QColor(color)
+    accent = QColor(color or theme.ACCENT)
     fill = QColor(accent)
     fill.setAlpha(28)
     stroke = max(2.0, min(width, height) / 60)
@@ -120,9 +121,9 @@ def _glyph_qr(painter: QPainter, s: float) -> None:
 _GLYPHS = {"text": _glyph_text, "image": _glyph_image, "watermark": _glyph_watermark, "qr": _glyph_qr}
 
 
-def line_icon(name: str, color: str = theme.TEXT_SECONDARY) -> QIcon:
+def line_icon(name: str, color: str | None = None) -> QIcon:
     """Лінійні іконки для панелей інструментів."""
-    pen_color = QColor(color)
+    pen_color = QColor(color or theme.TEXT_SECONDARY)
 
     def draw(painter: QPainter, s: float) -> None:
         painter.setPen(_round_pen(pen_color, s * 0.075))
@@ -195,6 +196,49 @@ def _info(painter: QPainter, s: float) -> None:
     painter.drawPoint(QPointF(s * 0.5, s * 0.34))
 
 
+def _lock(painter: QPainter, s: float, open_: bool = False) -> None:
+    painter.drawRoundedRect(QRectF(s * 0.26, s * 0.46, s * 0.48, s * 0.36), s * 0.06, s * 0.06)
+    shackle = QRectF(s * 0.34, s * 0.18, s * 0.32, s * 0.4)
+    if open_:
+        shackle.translate(s * 0.14, -s * 0.04)
+    painter.drawArc(shackle, 0, 180 * 16)
+    painter.drawLine(QPointF(shackle.left(), shackle.center().y()), QPointF(shackle.left(), s * 0.46 if not open_ else shackle.center().y()))
+    painter.drawLine(QPointF(shackle.right(), shackle.center().y()), QPointF(shackle.right(), s * 0.46))
+
+
+def _sun(painter: QPainter, s: float) -> None:
+    painter.drawEllipse(QPointF(s * 0.5, s * 0.5), s * 0.16, s * 0.16)
+    for i in range(8):
+        angle = math.radians(i * 45)
+        inner, outer = s * 0.27, s * 0.38
+        painter.drawLine(
+            QPointF(s * 0.5 + inner * math.cos(angle), s * 0.5 + inner * math.sin(angle)),
+            QPointF(s * 0.5 + outer * math.cos(angle), s * 0.5 + outer * math.sin(angle)),
+        )
+
+
+def _moon(painter: QPainter, s: float) -> None:
+    path = QPainterPath()
+    path.addEllipse(QPointF(s * 0.48, s * 0.52), s * 0.3, s * 0.3)
+    bite = QPainterPath()
+    bite.addEllipse(QPointF(s * 0.66, s * 0.36), s * 0.24, s * 0.24)
+    painter.drawPath(path.subtracted(bite))
+
+
+def _sliders(painter: QPainter, s: float) -> None:
+    for y, knob in ((0.3, 0.64), (0.5, 0.36), (0.7, 0.58)):
+        painter.drawLine(QPointF(s * 0.18, s * y), QPointF(s * 0.82, s * y))
+        painter.setBrush(painter.pen().color())
+        painter.drawEllipse(QPointF(s * knob, s * y), s * 0.06, s * 0.06)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+
+def _new_page(painter: QPainter, s: float) -> None:
+    painter.drawRoundedRect(QRectF(s * 0.24, s * 0.16, s * 0.52, s * 0.68), s * 0.06, s * 0.06)
+    painter.drawLine(QPointF(s * 0.5, s * 0.36), QPointF(s * 0.5, s * 0.64))
+    painter.drawLine(QPointF(s * 0.36, s * 0.5), QPointF(s * 0.64, s * 0.5))
+
+
 _LINE_GLYPHS: dict[str, Callable[[QPainter, float], None]] = {
     "undo": _undo,
     "redo": lambda p, s: _undo(p, s, mirror=True),
@@ -208,4 +252,10 @@ _LINE_GLYPHS: dict[str, Callable[[QPainter, float], None]] = {
     "fit": _fit,
     "refresh": _refresh,
     "info": _info,
+    "lock": _lock,
+    "unlock": lambda p, s: _lock(p, s, open_=True),
+    "sun": _sun,
+    "moon": _moon,
+    "sliders": _sliders,
+    "new-page": _new_page,
 }

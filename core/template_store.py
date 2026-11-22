@@ -57,17 +57,36 @@ def import_asset(template_dir: Path, source: Path, subdir: str) -> str:
     return target.relative_to(root).as_posix()
 
 
+def create_template(templates_root: Path, folder: str, config: TemplateConfig, fonts_source: Path) -> Path:
+    """Новий шаблон: папка з fonts/ (копія шрифтів із fonts_source) та config.json."""
+    target = _new_template_dir(templates_root, folder)
+    try:
+        target.mkdir(parents=True)
+        if fonts_source.is_dir():
+            shutil.copytree(fonts_source, target / "fonts")
+    except OSError as exc:
+        shutil.rmtree(target, ignore_errors=True)
+        raise CertificateError(f"Не вдалося створити шаблон '{folder}': {exc}") from exc
+    save_config(target, config)
+    return target
+
+
 def clone_template(templates_root: Path, source_dir: Path, new_name: str) -> Path:
     """Копіює всю папку шаблону під новою назвою."""
-    if not _SAFE_NAME_RE.match(new_name):
-        raise CertificateError("Назва шаблону: латиниця, цифри, «-» і «_», до 64 символів")
-    target = templates_root / new_name
-    if target.exists():
-        raise CertificateError(f"Шаблон '{new_name}' уже існує")
+    target = _new_template_dir(templates_root, new_name)
     try:
         shutil.copytree(source_dir, target)
     except OSError as exc:
         raise CertificateError(f"Не вдалося створити шаблон '{new_name}': {exc}") from exc
+    return target
+
+
+def _new_template_dir(templates_root: Path, folder: str) -> Path:
+    if not _SAFE_NAME_RE.match(folder):
+        raise CertificateError("Назва папки шаблону: латиниця, цифри, «-» і «_», до 64 символів")
+    target = templates_root / folder
+    if target.exists():
+        raise CertificateError(f"Шаблон '{folder}' уже існує")
     return target
 
 

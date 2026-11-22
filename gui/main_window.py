@@ -28,7 +28,7 @@ from core.template_catalog import list_templates
 from core.template_loader import load_template_config
 from core.template_store import clone_template, save_config
 from gui import theme
-from gui.about import AboutDialog, app_logo
+from gui.about import app_logo
 from gui.batch_dialog import BatchDialog
 from gui.canvas import CanvasView, CertificateScene
 from gui.document import EditorDocument
@@ -37,7 +37,10 @@ from gui.layer_actions import layer_subtitle, new_layer_payload, scaled_layer_ch
 from gui.layer_panels import build_panel, choose_background
 from gui.layers_panel import LayersPanel
 from gui.qt_utils import line_icon, pil_to_pixmap, placeholder_pixmap
+from gui.settings import UserSettings
+from gui.shortcuts_dialog import ShortcutsDialog
 from gui.toast import Toast
+from gui.window_extras import WindowExtrasMixin
 from renderers.pillow_renderer import AnyLayer, PillowRenderer, RenderContext
 
 logger = logging.getLogger(__name__)
@@ -50,9 +53,12 @@ PLACEHOLDER_SIZE = (360, 180)
 ZOOM_FACTOR = 1.15
 
 
-class MainWindow(QMainWindow):
-    def __init__(self, templates_root: Path, output_dir: Path) -> None:
+class MainWindow(WindowExtrasMixin, QMainWindow):
+    def __init__(
+        self, templates_root: Path, output_dir: Path, settings: UserSettings | None = None
+    ) -> None:
         super().__init__()
+        self._settings = settings or UserSettings()
         self._templates_root = templates_root
         self._output_dir = output_dir
         self._renderer = PillowRenderer()
@@ -63,7 +69,8 @@ class MainWindow(QMainWindow):
         templates = list_templates(templates_root)
         if not templates:
             raise CertificateError(f"У {templates_root} немає жодного шаблону з config.json")
-        self._doc = EditorDocument(templates_root / templates[0])
+        start = self._settings.last_template if self._settings.last_template in templates else templates[0]
+        self._doc = EditorDocument(templates_root / start)
         self._doc.subscribe(self._on_doc_changed)
 
         self._scene = CertificateScene()
@@ -77,7 +84,9 @@ class MainWindow(QMainWindow):
         self._create_shortcuts()
         self.resize(1440, 880)
         self.setMinimumSize(1100, 680)
-        self._full_sync()
+        if self._settings.geometry is not None:
+            self.restoreGeometry(self._settings.geometry)
+        self._apply_appearance()  # також виконує _full_sync()
         QTimer.singleShot(0, self._view.fit_page)
 
     # ------------------------------------------------------------------ #
@@ -138,7 +147,9 @@ class MainWindow(QMainWindow):
             self._template_box.addItem(self._template_title(folder), folder)
         self._template_box.setMinimumWidth(200)
         self._template_box.setToolTip("Шаблон")
+        self._template_box.setCurrentIndex(max(0, self._template_box.findData(self._doc.template_dir.name)))
         row.addWidget(self._template_box)
+        row.addWidget(self._icon_button("new-page", "Новий шаблон (Ctrl+N)", self._new_template))
 
         row.addSpacing(10)
         self._undo_button = self._icon_button("undo", "Скасувати (Ctrl+Z)", self._doc.undo)
@@ -177,7 +188,9 @@ class MainWindow(QMainWindow):
         export.setToolTip("Зберегти сертифікат у JPG/PNG/PDF (Ctrl+E)")
         export.clicked.connect(self._export)
         row.addWidget(export)
-        row.addWidget(self._icon_button("info", "Про програму", lambda: AboutDialog(self).exec()))
+        row.addSpacing(4)
+        for button in self._build_appearance_buttons():
+            row.addWidget(button)
         return bar
 
     def _template_title(self, folder: str) -> str:
@@ -190,6 +203,7 @@ class MainWindow(QMainWindow):
     def _icon_button(icon: str, tooltip: str, slot) -> QToolButton:
         button = QToolButton()
         button.setObjectName("Ghost")
+        button.setProperty("icon_name", icon)  # щоб перемалювати при зміні теми
         button.setIcon(line_icon(icon, theme.TEXT))
         button.setIconSize(QSize(18, 18))
         button.setToolTip(tooltip)
@@ -199,7 +213,12 @@ class MainWindow(QMainWindow):
 
     def _connect(self) -> None:
         doc = self._doc
-        self._scene.layer_moved.connect(lambda lid, dx, dy: self._safely(lambda: doc.move_layer_by(lid, dx, dy)))
+        self._scene.layer_moved.connect(self._move_layer)
+        self._view.files_dropped.connect(self._on_files_dropped)
+        self._layers.lock_toggled.connect(self._toggle_lock)
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._on_system_scheme_changed)
         self._scene.layer_resized.connect(self._resize_layer)
         self._scene.layer_activated.connect(self._activate_layer)
         self._scene.layer_selected.connect(self._select)
@@ -230,6 +249,12 @@ class MainWindow(QMainWindow):
             (QKeySequence("Ctrl+E"), self._export),
             (QKeySequence("Ctrl+G"), self._open_batch),
             (QKeySequence("Ctrl+D"), self._duplicate_selected),
+            # Поля введення самі обробляють Ctrl+C/V, тож копіювання тексту не зламається.
+            (QKeySequence.StandardKey.Copy, self._copy_selected),
+            (QKeySequence.StandardKey.Paste, self._paste),
+            (QKeySequence("Ctrl+L"), lambda: self._toggle_lock()),
+            (QKeySequence("Ctrl+N"), self._new_template),
+            (QKeySequence("Ctrl+/"), lambda: ShortcutsDialog(self).exec()),
             # На рівні вікна, щоб працювало і з фокусом у списку шарів;
             # поля введення перехоплюють Delete/Backspace для себе (ShortcutOverride).
             (QKeySequence(Qt.Key.Key_Delete), self._remove_selected),
@@ -292,16 +317,16 @@ class MainWindow(QMainWindow):
         except CertificateError as exc:
             self._show_error(str(exc))
             pixmap = placeholder_pixmap(*PLACEHOLDER_SIZE, f"⚠ {name}", theme.DANGER)
-            self._scene.upsert_layer(layer.id, pixmap, layer.x, layer.y, z, layer.visible, str(exc))
+            self._scene.upsert_layer(layer.id, pixmap, layer.x, layer.y, z, layer.visible, str(exc), layer.locked)
             return
         if sprite is None:
             width = getattr(layer, "width", None) or PLACEHOLDER_SIZE[0]
             height = getattr(layer, "height", None) or PLACEHOLDER_SIZE[1]
             pixmap = placeholder_pixmap(width, height, name)
-            self._scene.upsert_layer(layer.id, pixmap, layer.x, layer.y, z, layer.visible, tooltip)
+            self._scene.upsert_layer(layer.id, pixmap, layer.x, layer.y, z, layer.visible, tooltip, layer.locked)
             return
         pixmap = pil_to_pixmap(sprite.image)
-        self._scene.upsert_layer(layer.id, pixmap, sprite.x, sprite.y, z, layer.visible, tooltip)
+        self._scene.upsert_layer(layer.id, pixmap, sprite.x, sprite.y, z, layer.visible, tooltip, layer.locked)
 
     def _z_index(self, layer_id: str) -> int:
         return next(i for i, layer in enumerate(self._doc.config.layers) if layer.id == layer_id)
@@ -409,6 +434,15 @@ class MainWindow(QMainWindow):
         layer_id = self._selected
         doc = self._doc
         menu = QMenu(self)
+        locked = doc.layer(layer_id).locked
+        menu.addAction(
+            line_icon("unlock" if locked else "lock"),
+            "Розблокувати\tCtrl+L" if locked else "Заблокувати\tCtrl+L",
+            lambda: self._toggle_lock(layer_id),
+        )
+        menu.addAction("Копіювати\tCtrl+C", self._copy_selected)
+        menu.addAction("Вставити\tCtrl+V", self._paste)
+        menu.addSeparator()
         menu.addAction(line_icon("duplicate"), "Дублювати\tCtrl+D", self._duplicate_selected)
         menu.addAction("↔  По центру сторінки", lambda: self._safely(lambda: self._center_layer(layer_id, "horizontal")))
         menu.addAction("↕  По центру по вертикалі", lambda: self._safely(lambda: self._center_layer(layer_id, "vertical")))
@@ -535,6 +569,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802 — Qt API
         if self._confirm_discard():
+            self._remember_session()
             event.accept()
         else:
             event.ignore()

@@ -181,6 +181,7 @@ class LayerPanel(Panel):
         general = self.section("Загальне")
         general.add_row("Назва", self.line(lambda: self.layer.label, lambda v: self.update({"label": v or None}, "label"), layer.id))
         general.add_row("Видимий", self.switch(lambda: self.layer.visible, lambda v: self.update({"visible": v})))
+        general.add_row("Заблоковано", self.switch(lambda: self.layer.locked, lambda v: self.update({"locked": v})))
 
         self.build_specific()
 

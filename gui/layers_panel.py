@@ -25,7 +25,7 @@ NAME_MAX_CHARS = 21
 
 
 class _LayerRow(QWidget):
-    def __init__(self, layer: AnyLayer, subtitle: str, on_toggle) -> None:
+    def __init__(self, layer: AnyLayer, subtitle: str, on_toggle, on_lock) -> None:
         super().__init__()
         self.setToolTip(f"{layer.label or layer.id}\n{subtitle}")
         layout = QHBoxLayout(self)
@@ -49,6 +49,17 @@ class _LayerRow(QWidget):
         text_box.addWidget(detail)
         layout.addLayout(text_box, 1)
 
+        lock = QToolButton()
+        lock.setObjectName("Ghost")
+        lock.setIcon(line_icon("lock", theme.ACCENT) if layer.locked else line_icon("unlock", theme.TEXT_TERTIARY))
+        lock.setToolTip("Розблокувати (Ctrl+L)" if layer.locked else "Заблокувати від переміщення (Ctrl+L)")
+        lock.setCursor(Qt.CursorShape.PointingHandCursor)
+        lock.clicked.connect(lambda: on_lock(layer.id, not layer.locked))
+        # Відкритий замок показуємо лише при наведенні — так назві шару лишається більше місця.
+        lock.setVisible(layer.locked)
+        self._lock, self._always_show_lock = lock, layer.locked
+        layout.addWidget(lock)
+
         eye = QToolButton()
         eye.setObjectName("Ghost")
         eye.setIcon(line_icon("eye" if layer.visible else "eye-off"))
@@ -56,6 +67,15 @@ class _LayerRow(QWidget):
         eye.setCursor(Qt.CursorShape.PointingHandCursor)
         eye.clicked.connect(lambda: on_toggle(layer.id, not layer.visible))
         layout.addWidget(eye)
+
+
+    def enterEvent(self, event) -> None:  # noqa: N802 — Qt API
+        self._lock.setVisible(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 — Qt API
+        self._lock.setVisible(self._always_show_lock)
+        super().leaveEvent(event)
 
 
 class _ReorderList(QListWidget):
@@ -79,6 +99,7 @@ class _ReorderList(QListWidget):
 class LayersPanel(QWidget):
     layer_selected = Signal(object)  # str | None
     visibility_toggled = Signal(str, bool)
+    lock_toggled = Signal(str, bool)
     add_requested = Signal(str)
     remove_requested = Signal()
     duplicate_requested = Signal()
@@ -166,10 +187,18 @@ class LayersPanel(QWidget):
             row.addWidget(button)
         return bar
 
+    def refresh_icons(self) -> None:
+        """Перемальовує іконки панелі інструментів під поточну тему."""
+        for button in self.findChildren(QToolButton):
+            name = button.property("icon_name")
+            if name:
+                button.setIcon(line_icon(name))
+
     @staticmethod
     def _tool(icon: str, tooltip: str) -> QToolButton:
         button = QToolButton()
         button.setObjectName("Ghost")
+        button.setProperty("icon_name", icon)
         button.setIcon(line_icon(icon))
         button.setIconSize(QSize(18, 18))
         button.setToolTip(tooltip)
@@ -185,7 +214,9 @@ class LayersPanel(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, layer.id)
             item.setSizeHint(QSize(0, ROW_HEIGHT))
             self._list.addItem(item)
-            row = _LayerRow(layer, subtitles.get(layer.id, ""), self.visibility_toggled.emit)
+            row = _LayerRow(
+                layer, subtitles.get(layer.id, ""), self.visibility_toggled.emit, self.lock_toggled.emit
+            )
             self._list.setItemWidget(item, row)
             if layer.id == selected:
                 self._list.setCurrentItem(item)

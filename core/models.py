@@ -95,6 +95,7 @@ class _BaseLayer(_FrozenModel):
     opacity: float = Field(default=1.0, ge=0.0, le=1.0)
     rotation: float = Field(default=0.0, ge=-360, le=360, description="Градуси, проти годинникової")
     visible: bool = True
+    locked: bool = Field(default=False, description="Заблоковано від переміщення в редакторі")
 
 
 class WatermarkLayer(_BaseLayer):

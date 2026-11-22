@@ -1,6 +1,7 @@
 """Полотно редактора: сторінка сертифіката та шари, що перетягуються й масштабуються мишею."""
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap, QWheelEvent
@@ -27,6 +28,8 @@ ZOOM_STEP = 1.15
 MIN_ZOOM, MAX_ZOOM = 0.05, 4.0
 PAGE_MARGIN_PX = 48
 GUIDE_COLOR = "#FF2D55"
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+DROPPABLE_SUFFIXES = IMAGE_SUFFIXES | {".csv", ".tsv"}
 
 # Кути: 0 — лівий верхній, 1 — правий верхній, 2 — лівий нижній, 3 — правий нижній.
 _OPPOSITE = {0: 3, 1: 2, 2: 1, 3: 0}
@@ -57,6 +60,7 @@ class LayerItem(QGraphicsPixmapItem):
         self._press_pos: QPointF | None = None
         self._resize: _ResizeState | None = None
         self._hovered = False
+        self.locked = False
         self.setFlags(
             QGraphicsItem.GraphicsItemFlag.ItemIsMovable
             | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
@@ -96,10 +100,13 @@ class LayerItem(QGraphicsPixmapItem):
         accent = QColor(theme.ACCENT)
         if not self.isSelected():
             accent.setAlpha(150)
-        painter.setPen(QPen(accent, (SELECTION_PEN_PX if self.isSelected() else 1.0) / scale))
+        pen = QPen(accent, (SELECTION_PEN_PX if self.isSelected() else 1.0) / scale)
+        if self.locked:
+            pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(rect)
-        if not self.isSelected():
+        if not self.isSelected() or self.locked:
             return
         handle = HANDLE_PX / scale
         painter.setBrush(QColor("white"))
@@ -113,8 +120,13 @@ class LayerItem(QGraphicsPixmapItem):
     # Взаємодія
     # ------------------------------------------------------------------ #
 
+    def set_locked(self, locked: bool) -> None:
+        self.locked = locked
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, not locked)
+        self.setCursor(Qt.CursorShape.ArrowCursor if locked else Qt.CursorShape.OpenHandCursor)
+
     def _handle_at(self, item_pos: QPointF) -> int | None:
-        if not self.isSelected():
+        if not self.isSelected() or self.locked:
             return None
         tolerance = HANDLE_HIT_PX / self._scene_ref.view_scale
         for index, corner in enumerate(_corners(self.content_rect())):
@@ -129,7 +141,8 @@ class LayerItem(QGraphicsPixmapItem):
 
     def hoverMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
         handle = self._handle_at(event.pos())
-        self.setCursor(_CURSORS[handle] if handle is not None else Qt.CursorShape.OpenHandCursor)
+        idle = Qt.CursorShape.ArrowCursor if self.locked else Qt.CursorShape.OpenHandCursor
+        self.setCursor(_CURSORS[handle] if handle is not None else idle)
         super().hoverMoveEvent(event)
 
     def hoverLeaveEvent(self, event) -> None:  # noqa: N802 — Qt API
@@ -149,8 +162,9 @@ class LayerItem(QGraphicsPixmapItem):
             self.setTransformOriginPoint(anchor_item)
             event.accept()
             return
-        self._press_pos = self.pos()
-        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        self._press_pos = None if self.locked else self.pos()
+        if not self.locked:
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
@@ -168,7 +182,7 @@ class LayerItem(QGraphicsPixmapItem):
             self._finish_resize()
             return
         super().mouseReleaseEvent(event)
-        self.setCursor(Qt.CursorShape.OpenHandCursor)
+        self.setCursor(Qt.CursorShape.ArrowCursor if self.locked else Qt.CursorShape.OpenHandCursor)
         self._scene_ref.hide_guides()
         if self._press_pos is None:
             return
@@ -211,11 +225,10 @@ class CertificateScene(QGraphicsScene):
         self._page = QGraphicsPixmapItem()
         self._page.setZValue(-1000)
         self._page.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(60)
-        shadow.setOffset(0, 12)
-        shadow.setColor(QColor(0, 0, 0, 55))
-        self._page.setGraphicsEffect(shadow)
+        self._shadow = QGraphicsDropShadowEffect()
+        self._shadow.setBlurRadius(60)
+        self._shadow.setOffset(0, 12)
+        self._page.setGraphicsEffect(self._shadow)
         self.addItem(self._page)
         self._items: dict[str, LayerItem] = {}
         self.view_scale = 1.0
@@ -231,6 +244,11 @@ class CertificateScene(QGraphicsScene):
             self.addItem(guide)
 
         self.selectionChanged.connect(self._emit_selection)
+
+    def refresh_theme(self) -> None:
+        # У темній темі тінь сильніша, інакше сторінка зливається з фоном.
+        self._shadow.setColor(QColor(0, 0, 0, 140 if theme.palette().is_dark else 55))
+        self.update()
 
     @property
     def page_rect(self) -> QRectF:
@@ -255,7 +273,15 @@ class CertificateScene(QGraphicsScene):
         self.setSceneRect(self.page_rect.adjusted(-margin, -margin, margin, margin))
 
     def upsert_layer(
-        self, layer_id: str, pixmap: QPixmap, x: int, y: int, z: int, visible: bool, tooltip: str
+        self,
+        layer_id: str,
+        pixmap: QPixmap,
+        x: int,
+        y: int,
+        z: int,
+        visible: bool,
+        tooltip: str,
+        locked: bool = False,
     ) -> None:
         item = self._items.get(layer_id)
         if item is None:
@@ -268,6 +294,7 @@ class CertificateScene(QGraphicsScene):
         item.setZValue(z)
         item.setVisible(visible)
         item.setToolTip(tooltip)
+        item.set_locked(locked)
 
     def retain_layers(self, layer_ids: set[str]) -> None:
         for layer_id in set(self._items) - layer_ids:
@@ -349,6 +376,7 @@ def _best_snap(edges: list[float], targets: list[float], threshold: float) -> tu
 class CanvasView(QGraphicsView):
     zoom_changed = Signal(float)
     context_menu_requested = Signal(QPoint)
+    files_dropped = Signal(list, QPointF, bool)  # шляхи, точка на сцені, затиснутий Shift
 
     def __init__(self, scene: CertificateScene) -> None:
         super().__init__(scene)
@@ -359,7 +387,7 @@ class CanvasView(QGraphicsView):
             | QPainter.RenderHint.SmoothPixmapTransform
             | QPainter.RenderHint.TextAntialiasing
         )
-        self.setBackgroundBrush(QColor(theme.CANVAS))
+        self.refresh_theme()
         self.setFrameShape(QGraphicsView.Shape.NoFrame)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
@@ -369,6 +397,11 @@ class CanvasView(QGraphicsView):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._pan_anchor: QPointF | None = None
         self._space_held = False
+        self.setAcceptDrops(True)
+
+    def refresh_theme(self) -> None:
+        self.setBackgroundBrush(QColor(theme.CANVAS))
+        self._scene.refresh_theme()
 
     @property
     def zoom(self) -> float:
@@ -431,6 +464,35 @@ class CanvasView(QGraphicsView):
             self._scene.clearSelection()
             return
         super().keyPressEvent(event)
+
+    # ------------------------------------------------------------------ #
+    # Перетягування файлів із файлового менеджера
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _dropped_paths(event) -> list[str]:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        return [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 — Qt API
+        if any(Path(path).suffix.lower() in DROPPABLE_SUFFIXES for path in self._dropped_paths(event)):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 — Qt API
+        event.acceptProposedAction()  # не віддаємо подію шарам — вони файлів не приймають
+
+    def dropEvent(self, event) -> None:  # noqa: N802 — Qt API
+        paths = [p for p in self._dropped_paths(event) if Path(p).suffix.lower() in DROPPABLE_SUFFIXES]
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        self.files_dropped.emit(paths, self.mapToScene(event.position().toPoint()), shift)
 
     def contextMenuEvent(self, event) -> None:  # noqa: N802 — Qt API
         item = self.itemAt(event.pos())
