@@ -18,9 +18,11 @@ from core.exceptions import CertificateError
 from core.models import (
     CanvasConfig,
     CertificateData,
+    FrameLayer,
     ImageLayer,
     OutputConfig,
     QrLayer,
+    ShapeLayer,
     TemplateConfig,
     TextLayer,
     WatermarkLayer,
@@ -28,6 +30,7 @@ from core.models import (
 from core.template_catalog import describe_inputs
 from core.template_loader import load_template_config
 from core.template_store import save_config
+from gui.page_size import resized_layers
 from renderers.pillow_renderer import AnyLayer
 
 ChangeKind = Literal["reset", "structure", "layer", "canvas", "data"]
@@ -41,6 +44,8 @@ LAYER_TYPES: dict[str, type[BaseModel]] = {
     "image": ImageLayer,
     "text": TextLayer,
     "qr": QrLayer,
+    "shape": ShapeLayer,
+    "frame": FrameLayer,
 }
 
 
@@ -150,13 +155,16 @@ class EditorDocument:
             layer = self.layer(layer_id)
             self.update_layer(layer_id, {"x": layer.x + dx, "y": layer.y + dy})
 
-    def add_layer(self, payload: dict[str, Any]) -> str:
+    def add_layer(self, payload: dict[str, Any], index: int | None = None) -> str:
+        """index — позиція в стосі (0 — найнижчий шар); None — поверх усіх."""
         layer_type = LAYER_TYPES.get(payload.get("type", ""))
         if layer_type is None:
             raise CertificateError(f"Невідомий тип шару: {payload.get('type')}")
         layer_id = self._unique_id(payload["type"])
         layer = _validated(layer_type, payload | {"id": layer_id})
-        state = replace(self._state, config=self._with_layers(self.config.layers + (layer,)))
+        layers = list(self.config.layers)
+        layers.insert(len(layers) if index is None else index, layer)
+        state = replace(self._state, config=self._with_layers(tuple(layers)))
         self._commit(state, "structure", layer_id)
         return layer_id
 
@@ -247,6 +255,16 @@ class EditorDocument:
         canvas = _validated(CanvasConfig, self.config.canvas.model_dump() | changes)
         config = self.config.model_copy(update={"canvas": canvas})
         self._commit(replace(self._state, config=config), "canvas", None, merge_key)
+
+    def resize_canvas(self, width: int, height: int, scale_content: bool) -> None:
+        """Новий розмір сторінки одним кроком історії; scale_content — пропорційно перенести шари."""
+        canvas = _validated(CanvasConfig, self.config.canvas.model_dump() | {"width": width, "height": height})
+        try:
+            layers = resized_layers(self.config, self.template_dir, width, height) if scale_content else self.config.layers
+        except ValidationError as exc:
+            raise CertificateError(f"Не вдалося перенести шари на новий розмір: {_humanize(exc)}") from exc
+        config = self.config.model_copy(update={"canvas": canvas, "layers": layers})
+        self._commit(replace(self._state, config=config), "canvas", None)
 
     def update_output(self, changes: dict[str, Any]) -> None:
         output = _validated(OutputConfig, self.config.output.model_dump() | changes)

@@ -4,11 +4,14 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 
+from PIL import Image
+
 from core.exceptions import CertificateError
-from core.models import SAFE_NAME_PATTERN, TemplateConfig
-from core.template_loader import CONFIG_FILENAME
+from core.models import SAFE_NAME_PATTERN, TemplateConfig, TextLayer
+from core.template_loader import CONFIG_FILENAME, resolve_template_asset
 
 _SAFE_NAME_RE = re.compile(SAFE_NAME_PATTERN)
 _UNSAFE_FILENAME_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
@@ -57,18 +60,48 @@ def import_asset(template_dir: Path, source: Path, subdir: str) -> str:
     return target.relative_to(root).as_posix()
 
 
-def create_template(templates_root: Path, folder: str, config: TemplateConfig, fonts_source: Path) -> Path:
-    """Новий шаблон: папка з fonts/ (копія шрифтів із fonts_source) та config.json."""
+def create_template(
+    templates_root: Path,
+    folder: str,
+    config: TemplateConfig,
+    fonts_source: Path,
+    assets: Mapping[str, Image.Image] | None = None,
+) -> Path:
+    """Новий шаблон: папка з fonts/ (копія шрифтів із fonts_source), згенерованими assets і config.json."""
     target = _new_template_dir(templates_root, folder)
     try:
         target.mkdir(parents=True)
         if fonts_source.is_dir():
             shutil.copytree(fonts_source, target / "fonts")
-    except OSError as exc:
+        _require_fonts(target, config)
+        for relative, image in (assets or {}).items():
+            save_generated_asset(target, relative, image)
+        save_config(target, config)
+    except (OSError, CertificateError) as exc:
         shutil.rmtree(target, ignore_errors=True)
+        if isinstance(exc, CertificateError):
+            raise
         raise CertificateError(f"Не вдалося створити шаблон '{folder}': {exc}") from exc
-    save_config(target, config)
     return target
+
+
+def save_generated_asset(template_dir: Path, relative: str, image: Image.Image) -> str:
+    """Зберігає згенероване зображення як PNG у шаблон; повертає фактичний відносний шлях."""
+    destination = resolve_template_asset(template_dir, relative)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = _unique_path(destination.parent, _safe_filename(destination.name))
+    try:
+        image.save(destination, format="PNG", optimize=True)
+    except OSError as exc:
+        raise CertificateError(f"Не вдалося зберегти зображення {relative}: {exc}") from exc
+    return destination.relative_to(template_dir).as_posix()
+
+
+def _require_fonts(template_dir: Path, config: TemplateConfig) -> None:
+    fonts = {layer.font for layer in config.layers if isinstance(layer, TextLayer)}
+    missing = sorted(font for font in fonts if not (template_dir / font).is_file())
+    if missing:
+        raise CertificateError(f"Для цієї заготовки бракує шрифтів: {', '.join(missing)}")
 
 
 def clone_template(templates_root: Path, source_dir: Path, new_name: str) -> Path:

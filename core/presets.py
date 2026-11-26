@@ -1,8 +1,12 @@
 """Заготовки для нового шаблону: розмір сторінки, кольори й стартові шари."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
+from core.classic_preset import FIELD_LABELS, PATTERN_ASSET, classic_assets, classic_layers
 from core.models import TemplateConfig
 
 TITLE_FONT = "fonts/NotoSans-Bold.ttf"
@@ -21,6 +25,7 @@ class Preset:
     text: str
     muted: str
     accent: str
+    style: str = "modern"  # "modern" — мінімалістичний; "classic" — рамка й дві колонки
 
 
 PRESETS: tuple[Preset, ...] = (
@@ -30,6 +35,9 @@ PRESETS: tuple[Preset, ...] = (
            2480, 1754, "#0B1736", "#FFFFFF", "#FFFFFFB3", "#E9B84C"),
     Preset("portrait_light", "A4 вертикально · світлий", "1754 × 2480, білий фон",
            1754, 2480, "#FFFFFF", "#1D1D1F", "#6E6E73", "#0071E3"),
+    Preset("classic_bilingual", "Класичний двомовний · з рамкою",
+           "A4 горизонтально: золота рамка, логотип, укр. та англ. колонки, печатка й підпис",
+           2480, 1754, "#FFFFFF", "#1A1A1A", "#4A4A4A", "#1F4E9A", style="classic"),
     Preset("square_light", "Квадрат · світлий", "2000 × 2000 — для соцмереж",
            2000, 2000, "#F5F5F7", "#1D1D1F", "#6E6E73", "#0071E3"),
 )
@@ -43,6 +51,35 @@ def preset_by_key(key: str) -> Preset:
 
 
 def starter_config(preset: Preset, name: str) -> TemplateConfig:
+    """Робочий шаблон для заготовки (класичний або мінімальний)."""
+    if preset.style == "classic":
+        return _classic_config(preset, name)
+    return _modern_config(preset, name)
+
+
+def starter_assets(preset: Preset, fonts_dir: Path) -> dict[str, Image.Image]:
+    """Згенеровані зображення, які потрібні заготовці (відносний шлях → зображення)."""
+    if preset.style == "classic":
+        return classic_assets(preset.width, preset.height, fonts_dir)
+    return {}
+
+
+def _classic_config(preset: Preset, name: str) -> TemplateConfig:
+    return TemplateConfig.model_validate(
+        {
+            "name": name,
+            "canvas": {
+                "width": preset.width, "height": preset.height, "background_color": preset.background,
+                "background_image": PATTERN_ASSET, "background_fit": "stretch",
+            },
+            "output": {"format": "pdf"},
+            "field_labels": FIELD_LABELS,
+            "layers": classic_layers(preset.width, preset.height),
+        }
+    )
+
+
+def _modern_config(preset: Preset, name: str) -> TemplateConfig:
     """Мінімальний робочий шаблон: заголовок, ПІБ, курс, дата, номер і QR-код."""
     w, h = preset.width, preset.height
     unit = min(w, h) / REFERENCE_SIDE

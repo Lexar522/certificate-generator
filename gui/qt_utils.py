@@ -15,12 +15,16 @@ TYPE_COLORS = {
     "image": "#34C759",
     "watermark": "#AF52DE",
     "qr": "#FF9500",
+    "shape": "#FF2D55",
+    "frame": "#C69214",
 }
 TYPE_NAMES = {
     "text": "Текст",
     "image": "Зображення",
     "watermark": "Водяний знак",
     "qr": "QR-код",
+    "shape": "Фігура",
+    "frame": "Рамка",
 }
 
 
@@ -118,7 +122,24 @@ def _glyph_qr(painter: QPainter, s: float) -> None:
     painter.drawRect(QRectF(s * 0.6, s * 0.6, s * 0.14, s * 0.14))
 
 
-_GLYPHS = {"text": _glyph_text, "image": _glyph_image, "watermark": _glyph_watermark, "qr": _glyph_qr}
+def _glyph_shape(painter: QPainter, s: float) -> None:
+    painter.drawRoundedRect(QRectF(s * 0.22, s * 0.22, s * 0.34, s * 0.34), s * 0.04, s * 0.04)
+    painter.drawEllipse(QRectF(s * 0.4, s * 0.4, s * 0.38, s * 0.38))
+
+
+def _glyph_frame(painter: QPainter, s: float) -> None:
+    painter.drawRoundedRect(QRectF(s * 0.2, s * 0.24, s * 0.6, s * 0.52), s * 0.04, s * 0.04)
+    painter.drawRect(QRectF(s * 0.3, s * 0.34, s * 0.4, s * 0.32))
+
+
+_GLYPHS = {
+    "text": _glyph_text,
+    "image": _glyph_image,
+    "watermark": _glyph_watermark,
+    "qr": _glyph_qr,
+    "shape": _glyph_shape,
+    "frame": _glyph_frame,
+}
 
 
 def line_icon(name: str, color: str | None = None) -> QIcon:

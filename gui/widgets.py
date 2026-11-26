@@ -120,6 +120,9 @@ class Segmented(QFrame):
         if button is not None:
             button.setChecked(True)
 
+    def value(self) -> str | None:
+        return next((key for key, button in self._buttons.items() if button.isChecked()), None)
+
 
 class ColorButton(QPushButton):
     """Кругла плашка кольору; відкриває системний діалог з альфа-каналом."""

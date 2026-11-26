@@ -18,6 +18,8 @@ SAFE_NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 MAX_CANVAS_SIDE = 10_000
 MAX_TEXT_LENGTH = 500
+MAX_LAYER_TEXT_LENGTH = 2000
+MAX_STROKE_WIDTH = 500
 DEFAULT_MIN_FONT_SIZE = 12
 CERTIFICATE_ID_PLACEHOLDER = "{certificate_id}"
 
@@ -120,9 +122,9 @@ class TextLayer(_BaseLayer):
     type: Literal["text"]
     text: str | None = Field(
         default=None,
-        max_length=MAX_TEXT_LENGTH,
+        max_length=MAX_LAYER_TEXT_LENGTH,
         description="Статичний текст; fields[id] має пріоритет. Плейсхолдери: "
-        "{certificate_id}, {issue_date}",
+        "{certificate_id}, {issue_date}; «\\n» — новий рядок",
     )
     font: RelativePath
     font_size: int = Field(gt=0, le=1000)
@@ -135,6 +137,7 @@ class TextLayer(_BaseLayer):
     )
     line_spacing: float = Field(default=1.2, ge=0.5, le=5.0)
     uppercase: bool = False
+    underline: bool = False
     required: bool = False
 
     @model_validator(mode="after")
@@ -170,8 +173,36 @@ class QrLayer(_BaseLayer):
         return value
 
 
+class ShapeLayer(_BaseLayer):
+    """Прямокутник, еліпс або лінія: рамки, підкладки, розділювачі, лінії для підпису."""
+
+    type: Literal["shape"]
+    shape: Literal["rectangle", "ellipse", "line"] = "rectangle"
+    width: Dimension
+    height: Dimension = Field(default=1, description="Для лінії не використовується — товщину задає stroke_width")
+    fill_color: HexColor | None = None
+    stroke_color: HexColor = "#000000"
+    stroke_width: int = Field(default=4, ge=0, le=MAX_STROKE_WIDTH)
+    corner_radius: int = Field(default=0, ge=0, le=MAX_CANVAS_SIDE)
+
+    @model_validator(mode="after")
+    def _check_visible(self) -> "ShapeLayer":
+        if self.fill_color is None and self.stroke_width == 0:
+            raise ValueError("фігура без заливки й обведення буде невидимою")
+        return self
+
+
+class FrameLayer(_BaseLayer):
+    """Декоративна рамка на всю сторінку; малюється під поточний розмір полотна."""
+
+    type: Literal["frame"]
+    style: Literal["gold", "classic", "minimal"] = "gold"
+    color: HexColor = Field(default="#1F3A5F", description="Колір ліній для стилів classic і minimal")
+    locked: bool = True
+
+
 Layer = Annotated[
-    Union[WatermarkLayer, ImageLayer, TextLayer, QrLayer],
+    Union[WatermarkLayer, ImageLayer, TextLayer, QrLayer, ShapeLayer, FrameLayer],
     Field(discriminator="type"),
 ]
 

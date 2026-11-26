@@ -33,25 +33,32 @@ def layout_text(
 ) -> TextBlock:
     """Підбирає шрифт і розбиття на рядки так, щоб текст вмістився в max_width.
 
+    «\\n» у тексті — примусовий новий рядок (абзац); кожен абзац переноситься окремо.
     overflow="shrink": зменшує кегль до min_font_size, далі — перенос рядків.
     overflow="wrap": перенос рядків за словами при початковому кеглі.
     """
+    paragraphs = tuple(text.splitlines()) or ("",)
     font = font_factory(font_size)
-    if max_width is None or measure_width(draw, text, font) <= max_width:
-        return TextBlock(font, (text,))
+    if max_width is None or _widest(draw, paragraphs, font) <= max_width:
+        return TextBlock(font, paragraphs)
 
     if overflow == "shrink":
-        fitted = _shrink_to_fit(draw, text, font_factory, font_size, max_width, min_font_size)
+        fitted = _shrink_to_fit(draw, paragraphs, font_factory, font_size, max_width, min_font_size)
         if fitted is not None:
-            return TextBlock(fitted, (text,))
+            return TextBlock(fitted, paragraphs)
         font = font_factory(min_font_size)
 
-    return TextBlock(font, _wrap_words(draw, text, font, max_width))
+    lines = tuple(line for paragraph in paragraphs for line in _wrap_words(draw, paragraph, font, max_width))
+    return TextBlock(font, lines)
+
+
+def _widest(draw: ImageDraw.ImageDraw, lines: tuple[str, ...], font: ImageFont.FreeTypeFont) -> int:
+    return max(measure_width(draw, line, font) for line in lines)
 
 
 def _shrink_to_fit(
     draw: ImageDraw.ImageDraw,
-    text: str,
+    lines: tuple[str, ...],
     font_factory: FontFactory,
     font_size: int,
     max_width: int,
@@ -63,7 +70,7 @@ def _shrink_to_fit(
     while low <= high:
         middle = (low + high) // 2
         candidate = font_factory(middle)
-        if measure_width(draw, text, candidate) <= max_width:
+        if _widest(draw, lines, candidate) <= max_width:
             best, low = candidate, middle + 1
         else:
             high = middle - 1
@@ -82,7 +89,7 @@ def _wrap_words(
             current = word
         else:
             current = candidate
-    if current:
+    if current or not lines:  # порожній абзац лишається порожнім рядком
         lines.append(current)
 
     too_wide = [line for line in lines if measure_width(draw, line, font) > max_width]

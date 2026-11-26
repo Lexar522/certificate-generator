@@ -14,12 +14,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.ornaments import FRAME_STYLES
 from gui import theme
+from gui.layer_actions import FRAME_PREFIX
 from gui.qt_utils import TYPE_NAMES, line_icon, type_icon
 from renderers.pillow_renderer import AnyLayer
 
 ROW_HEIGHT = 46
-ADD_ORDER = ("text", "image", "watermark", "qr")
+ADD_ORDER = ("text", "image", "watermark", "qr", "shape")
 SUBTITLE_MAX_CHARS = 27
 NAME_MAX_CHARS = 21
 
@@ -168,6 +170,9 @@ class LayersPanel(QWidget):
         for kind in ADD_ORDER:
             action = menu.addAction(type_icon(kind), TYPE_NAMES[kind])
             action.triggered.connect(lambda _=False, k=kind: self.add_requested.emit(k))
+        frames = menu.addMenu(type_icon("frame"), "Рамка")
+        for style, title in FRAME_STYLES.items():
+            frames.addAction(title, lambda s=style: self.add_requested.emit(f"{FRAME_PREFIX}{s}"))
         menu.addSeparator()
         menu.addAction(type_icon("image"), "Фонове зображення…", self.background_image_requested.emit)
         add.setMenu(menu)

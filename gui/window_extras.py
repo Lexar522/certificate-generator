@@ -17,6 +17,7 @@ from gui import theme
 from gui.about import AboutDialog
 from gui.batch_dialog import BatchDialog
 from gui.canvas import IMAGE_SUFFIXES
+from gui.canvas_size_dialog import CanvasSizeDialog
 from gui.layer_actions import CLIPBOARD_MIME, layer_to_clipboard, paste_payload, picture_payload_from_file
 from gui.new_template_dialog import NewTemplateDialog
 from gui.qt_utils import line_icon
@@ -25,6 +26,7 @@ from gui.shortcuts_dialog import ShortcutsDialog
 
 THEME_LABELS = {"system": "Як у системі", "light": "Світла", "dark": "Темна"}
 SWATCH_SIZE = 14
+BUNDLED_TEMPLATE = "default_tech"
 
 
 def _swatch(color: str) -> QIcon:
@@ -76,6 +78,7 @@ class WindowExtrasMixin:
 
         menu.addSeparator()
         menu.addAction("Новий шаблон…\tCtrl+N", self._new_template)
+        menu.addAction("Розмір полотна…\tCtrl+Shift+R", self._open_canvas_size)
         menu.addAction("Гарячі клавіші\tCtrl+/", lambda: ShortcutsDialog(self).exec())
         menu.addSeparator()
         menu.addAction("Про програму", lambda: AboutDialog(self).exec())
@@ -199,7 +202,7 @@ class WindowExtrasMixin:
     def _new_template(self) -> None:
         if not self._confirm_discard():
             return
-        dialog = NewTemplateDialog(self._templates_root, self._doc.template_dir / "fonts", self)
+        dialog = NewTemplateDialog(self._templates_root, self._fonts_source(), self)
         if not dialog.exec() or dialog.created_dir is None:
             return
         folder = dialog.created_dir.name
@@ -211,6 +214,25 @@ class WindowExtrasMixin:
         self._safely(lambda: self._doc.load(dialog.created_dir))
         self._view.fit_page()
         self._toast.show_message(f"Створено шаблон «{self._doc.config.name}»", "success")
+
+    def _fonts_source(self) -> Path:
+        """Шрифти для нового шаблону: з комплектного шаблону (там є і серифні), інакше — з поточного."""
+        bundled = self._templates_root / BUNDLED_TEMPLATE / "fonts"
+        return bundled if bundled.is_dir() else self._doc.template_dir / "fonts"
+
+    def _open_canvas_size(self) -> None:
+        dialog = CanvasSizeDialog(self._doc, self)
+        if not dialog.exec():
+            return
+        try:
+            if dialog.dpi != self._doc.config.output.dpi:
+                self._doc.update_output({"dpi": dialog.dpi})
+            self._doc.resize_canvas(dialog.width, dialog.height, dialog.scale_content)
+        except CertificateError as exc:
+            self._show_error(str(exc))
+            return
+        self._view.fit_page()
+        self._toast.show_message(f"Розмір полотна: {dialog.width} × {dialog.height} px", "success")
 
     def _remember_session(self) -> None:
         self._settings = updated(

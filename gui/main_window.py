@@ -33,7 +33,7 @@ from gui.batch_dialog import BatchDialog
 from gui.canvas import CanvasView, CertificateScene
 from gui.document import EditorDocument
 from gui.inspector_base import InspectorContext, Panel
-from gui.layer_actions import layer_subtitle, new_layer_payload, scaled_layer_changes
+from gui.layer_actions import FRAME_PREFIX, layer_subtitle, new_layer_payload, scaled_layer_changes
 from gui.layer_panels import build_panel, choose_background
 from gui.layers_panel import LayersPanel
 from gui.qt_utils import line_icon, pil_to_pixmap, placeholder_pixmap
@@ -254,6 +254,7 @@ class MainWindow(WindowExtrasMixin, QMainWindow):
             (QKeySequence.StandardKey.Paste, self._paste),
             (QKeySequence("Ctrl+L"), lambda: self._toggle_lock()),
             (QKeySequence("Ctrl+N"), self._new_template),
+            (QKeySequence("Ctrl+Shift+R"), self._open_canvas_size),
             (QKeySequence("Ctrl+/"), lambda: ShortcutsDialog(self).exec()),
             # На рівні вікна, щоб працювало і з фокусом у списку шарів;
             # поля введення перехоплюють Delete/Backspace для себе (ShortcutOverride).
@@ -338,7 +339,7 @@ class MainWindow(WindowExtrasMixin, QMainWindow):
             self._panel.bind()
             return
         context = InspectorContext(
-            self._doc, self._show_error, self._pick_image, self._pick_font, self._center_layer
+            self._doc, self._show_error, self._pick_image, self._pick_font, self._center_layer, self._open_canvas_size
         )
         self._panel = build_panel(context, self._selected)
         self._panel_key = key
@@ -373,7 +374,8 @@ class MainWindow(WindowExtrasMixin, QMainWindow):
     def _add_layer(self, kind: str) -> None:
         payload = new_layer_payload(kind, self._doc, self._pick_image, self._pick_font)
         if payload is not None:
-            self._doc.add_layer(payload)
+            # Рамка — найнижчим шаром, щоб не перекривала кліки по іншим об'єктам.
+            self._doc.add_layer(payload, 0 if kind.startswith(FRAME_PREFIX) else None)
             self._toast.show_message(f"Додано: {payload['label']}. Перетягніть його на потрібне місце.", "success")
 
     def _resize_layer(self, layer_id: str, factor: float, left: int, top: int) -> None:

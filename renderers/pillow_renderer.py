@@ -20,13 +20,16 @@ from core.exceptions import AssetNotFoundError, FontLoadError, MissingFieldError
 from core.models import (
     CanvasConfig,
     CertificateData,
+    FrameLayer,
     ImageLayer,
     OutputConfig,
     QrLayer,
+    ShapeLayer,
     TemplateConfig,
     TextLayer,
     WatermarkLayer,
 )
+from core.ornaments import frame_image
 from core.template_catalog import PLACEHOLDER_RE
 from core.template_loader import load_template_config, resolve_template_asset
 from renderers.base import BaseRenderer
@@ -34,10 +37,14 @@ from renderers.text_layout import aligned_x, layout_text
 
 logger = logging.getLogger(__name__)
 
-AnyLayer = WatermarkLayer | ImageLayer | TextLayer | QrLayer
+AnyLayer = WatermarkLayer | ImageLayer | TextLayer | QrLayer | ShapeLayer | FrameLayer
 
 TRANSPARENT = (0, 0, 0, 0)
 QR_BOX_SIZE = 10
+UNDERLINE_OFFSET = 0.1  # відступ лінії під базовою лінією, частка кеглю
+UNDERLINE_THICKNESS = 0.06
+SHAPE_SUPERSAMPLE = 2
+FRAME_CACHE_SIZE = 8
 PIL_FORMATS = {".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".pdf": "PDF"}
 QR_ERROR_LEVELS = {
     "L": ERROR_CORRECT_L,
@@ -118,6 +125,8 @@ class PillowRenderer(BaseRenderer):
             ImageLayer: self._image_sprite,
             TextLayer: self._text_sprite,
             QrLayer: self._qr_sprite,
+            ShapeLayer: self._shape_sprite,
+            FrameLayer: self._frame_sprite,
         }
         sprite = handlers[type(layer)](layer, context)
         if sprite is None:
@@ -161,17 +170,48 @@ class PillowRenderer(BaseRenderer):
             for i, line in enumerate(block.lines)
         ]
         boxes = [measure.textbbox(pos, line, font=block.font) for pos, line in zip(positions, block.lines)]
-        left = int(min(box[0] for box in boxes))
-        top = int(min(box[1] for box in boxes))
-        right = int(max(box[2] for box in boxes)) + 1
-        bottom = int(max(box[3] for box in boxes)) + 1
+        underlines = _underline_boxes(block.font, positions, boxes, block.lines) if layer.underline else []
+        left = int(min(box[0] for box in boxes + underlines))
+        top = int(min(box[1] for box in boxes + underlines))
+        right = int(max(box[2] for box in boxes + underlines)) + 1
+        bottom = int(max(box[3] for box in boxes + underlines)) + 1
 
         sprite = Image.new("RGBA", (max(1, right - left), max(1, bottom - top)), TRANSPARENT)
         draw = ImageDraw.Draw(sprite)
         fill = ImageColor.getrgb(layer.color)
         for (px, py), line in zip(positions, block.lines):
             draw.text((px - left, py - top), line, font=block.font, fill=fill)
+        for x0, y0, x1, y1 in underlines:
+            draw.rectangle((x0 - left, y0 - top, x1 - left, y1 - top), fill=fill)
         return LayerSprite(sprite, left, top)
+
+    def _shape_sprite(self, layer: ShapeLayer, context: RenderContext) -> LayerSprite:
+        stroke = ImageColor.getrgb(layer.stroke_color)
+        if layer.shape == "line":
+            thickness = max(1, layer.stroke_width)
+            image = Image.new("RGBA", (layer.width, thickness), stroke)
+            return LayerSprite(image, layer.x, layer.y)
+
+        # Малюємо в 2× і зменшуємо — згладжені краї кіл і заокруглень.
+        factor = SHAPE_SUPERSAMPLE
+        size = (layer.width * factor, layer.height * factor)
+        image = Image.new("RGBA", size, TRANSPARENT)
+        draw = ImageDraw.Draw(image)
+        box = (0, 0, size[0] - 1, size[1] - 1)
+        fill = ImageColor.getrgb(layer.fill_color) if layer.fill_color else None
+        outline = stroke if layer.stroke_width else None
+        width = layer.stroke_width * factor
+        if layer.shape == "ellipse":
+            draw.ellipse(box, fill=fill, outline=outline, width=width)
+        else:
+            radius = min(layer.corner_radius * factor, min(size) // 2)
+            draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+        image = image.resize((layer.width, layer.height), Image.Resampling.LANCZOS)
+        return LayerSprite(image, layer.x, layer.y)
+
+    def _frame_sprite(self, layer: FrameLayer, context: RenderContext) -> LayerSprite:
+        canvas = context.config.canvas
+        return LayerSprite(cached_frame(canvas.width, canvas.height, layer.style, layer.color), layer.x, layer.y)
 
     def _qr_sprite(self, layer: QrLayer, context: RenderContext) -> LayerSprite:
         url = layer.url_template.replace("{certificate_id}", context.data.certificate_id)
@@ -296,6 +336,15 @@ def open_rgba(path: Path, layer_id: str) -> Image.Image:
         raise AssetNotFoundError(layer_id, path, f"помилка читання: {exc}") from exc
 
 
+@lru_cache(maxsize=FRAME_CACHE_SIZE)
+def cached_frame(width: int, height: int, style: str, color: str) -> Image.Image:
+    """Рамка малюється помітний час, а в пакетній генерації однакова для всіх сертифікатів.
+
+    Зображення спільне для викликів, тож його ніхто не змінює: композиція завжди працює з копіями.
+    """
+    return frame_image(width, height, style, color)
+
+
 @lru_cache(maxsize=128)
 def load_font(font_path: Path, size: int, layer_id: str) -> ImageFont.FreeTypeFont:
     if not font_path.is_file():
@@ -304,6 +353,25 @@ def load_font(font_path: Path, size: int, layer_id: str) -> ImageFont.FreeTypeFo
         return ImageFont.truetype(str(font_path), size)
     except OSError as exc:
         raise FontLoadError(layer_id, font_path, f"пошкоджений або непідтримуваний шрифт: {exc}") from exc
+
+
+def _underline_boxes(
+    font: ImageFont.FreeTypeFont,
+    positions: list[tuple[float, float]],
+    boxes: list[tuple[float, float, float, float]],
+    lines: tuple[str, ...],
+) -> list[tuple[int, int, int, int]]:
+    """Прямокутники підкреслення під кожним непорожнім рядком (по ширині його гліфів)."""
+    ascent, _ = font.getmetrics()
+    offset = max(1, round(font.size * UNDERLINE_OFFSET))
+    thickness = max(1, round(font.size * UNDERLINE_THICKNESS))
+    result = []
+    for (_, py), box, line in zip(positions, boxes, lines):
+        if not line.strip():
+            continue
+        top = round(py + ascent + offset)
+        result.append((round(box[0]), top, round(box[2]), top + thickness - 1))
+    return result
 
 
 def _apply_opacity(sprite: LayerSprite, opacity: float) -> LayerSprite:

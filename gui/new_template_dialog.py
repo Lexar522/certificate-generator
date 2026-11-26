@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from core.exceptions import CertificateError
-from core.presets import PRESETS, Preset, starter_config
+from core.presets import PRESETS, Preset, starter_assets, starter_config
 from core.template_store import create_template
 from gui import theme
 from gui.widgets import Section
@@ -132,7 +132,11 @@ class NewTemplateDialog(QDialog):
         preset = PRESETS[max(0, self._presets.currentRow())]
         try:
             self.created_dir = create_template(
-                self._templates_root, folder, starter_config(preset, title), self._fonts_source
+                self._templates_root,
+                folder,
+                starter_config(preset, title),
+                self._fonts_source,
+                starter_assets(preset, self._fonts_source),
             )
         except CertificateError as exc:
             self._error.setText(str(exc))

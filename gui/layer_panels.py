@@ -9,10 +9,12 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QComboBox, QDateEdit, QHBoxLayout, QLabel, QPushButton, QToolButton, QWidget
 
 from core.exceptions import CertificateError
-from core.models import ImageLayer, QrLayer, TextLayer, WatermarkLayer
-from core.template_store import import_asset
+from core.models import FrameLayer, ImageLayer, QrLayer, ShapeLayer, TextLayer, WatermarkLayer
+from core.ornaments import honeycomb_background
+from core.template_store import import_asset, save_generated_asset
 from gui import theme
 from gui.document import EditorDocument, new_certificate_id
+from gui.page_size import CUSTOM_FORMAT, detect_format, format_by_key, px_to_mm
 from gui.inspector_base import InspectorContext, Panel
 from gui.qt_utils import TYPE_NAMES, line_icon, pil_to_pixmap, type_icon
 from gui.widgets import hbox
@@ -45,6 +47,28 @@ def choose_background(doc: EditorDocument, pick_image: Callable[[], Path | None]
         return False
     doc.update_canvas({"background_image": import_asset(doc.template_dir, path, "assets")})
     return True
+
+
+def apply_pattern_background(doc: EditorDocument) -> None:
+    canvas = doc.config.canvas
+    image = honeycomb_background(canvas.width, canvas.height, canvas.background_color)
+    relative = save_generated_asset(doc.template_dir, "assets/pattern_honeycomb.png", image)
+    doc.update_canvas({"background_image": relative, "background_fit": "stretch"})
+
+
+def canvas_summary(doc: EditorDocument) -> str:
+    """«A4 · горизонтально · 210 × 148 мм при 300 DPI»."""
+    canvas, dpi = doc.config.canvas, doc.config.output.dpi
+    key = detect_format(canvas.width, canvas.height, dpi)
+    name = "Власний" if key == CUSTOM_FORMAT else format_by_key(key).title.split(" · ")[0]
+    orientation = "горизонтально" if canvas.width > canvas.height else "вертикально" if canvas.width < canvas.height else "квадрат"
+    size = f"{px_to_mm(canvas.width, dpi):.0f} × {px_to_mm(canvas.height, dpi):.0f} мм при {dpi} DPI"
+    return f"{name} · {orientation}\n{size}"
+
+
+def swap_orientation(doc: EditorDocument) -> None:
+    canvas = doc.config.canvas
+    doc.resize_canvas(canvas.height, canvas.width, scale_content=True)
 
 
 def _background_thumbnail(doc: EditorDocument, width: int) -> QPixmap:
@@ -91,6 +115,10 @@ class DocumentPanel(Panel):
         clear.clicked.connect(lambda: self.guard(lambda: doc.update_canvas({"background_image": None})))
         self.visible_when(lambda: doc.config.canvas.background_image is not None, clear)
         section.add_full(hbox(choose, clear, stretch_first=True))
+        pattern = QPushButton("Візерунок «соти»")
+        pattern.setToolTip("Ледь помітний візерунок, як на захищених бланках")
+        pattern.clicked.connect(lambda: self.guard(lambda: apply_pattern_background(doc)))
+        section.add_full(pattern)
 
         fit = self.segmented(
             [("cover", "Заповнити"), ("contain", "Вмістити"), ("stretch", "Розтягнути")],
@@ -144,7 +172,15 @@ class DocumentPanel(Panel):
         width = self.spin(lambda: doc.config.canvas.width, lambda v: doc.update_canvas({"width": v}, "canvas:w"), 1, MAX_COORD, " px")
         height = self.spin(lambda: doc.config.canvas.height, lambda v: doc.update_canvas({"height": v}, "canvas:h"), 1, MAX_COORD, " px")
         section.add_row("Розмір", hbox(width, QLabel("×"), height, stretch_first=False))
-        section.add_full(self.hint("A4 при 300 DPI: 2480 × 1754 (горизонтально) або 1754 × 2480 (вертикально)."))
+        section.add_row("Формат", self.caption(lambda: canvas_summary(doc)))
+        resize = QPushButton("Змінити розмір…")
+        resize.setObjectName("Accent")
+        resize.clicked.connect(lambda: self.guard(self.ctx.open_canvas_size))
+        rotate = QPushButton("⟲ Повернути")
+        rotate.setToolTip("Поміняти ширину й висоту місцями; вміст переноситься пропорційно")
+        rotate.clicked.connect(lambda: self.guard(lambda: swap_orientation(doc)))
+        section.add_full(hbox(resize, rotate, stretch_first=True))
+        section.add_full(self.hint("У діалозі — формати A3, A4, A5, Letter, квадрат, DPI та пропорційне масштабування вмісту."))
 
     def _build_export(self) -> None:
         doc = self.doc
@@ -302,7 +338,7 @@ class TextPanel(LayerPanel):
         doc = self.doc
         content = self.section("Вміст")
         content.add_row("Змінне поле", self.switch(lambda: self.layer.text is None, lambda v: doc.set_text_mode(self.layer_id, v)))
-        self._text_edit = self.line(self._get_text, self._set_text, "Введіть текст")
+        self._text_edit = self.text_area(self._get_text, self._set_text, "Введіть текст; Enter — новий рядок")
         content.add_row("Текст", self._text_edit)
         required = self.switch(lambda: self.layer.required, lambda v: self.update({"required": v}))
         required_caption = content.add_row("Обов'язкове", required)
@@ -318,6 +354,7 @@ class TextPanel(LayerPanel):
             self.segmented([("left", "Ліво"), ("center", "Центр"), ("right", "Право")], lambda: self.layer.align, lambda v: self.update({"align": v})),
         )
         typography.add_row("Великі літери", self.switch(lambda: self.layer.uppercase, lambda v: self.update({"uppercase": v})))
+        typography.add_row("Підкреслення", self.switch(lambda: self.layer.underline, lambda v: self.update({"underline": v})))
 
         layout = self.section("Перенесення")
         layout.add_row("Макс. ширина", self.spin(lambda: self.layer.max_width, lambda v: self.update({"max_width": v}, "max_width"), 1, MAX_COORD, " px", "Без обмеження"))
@@ -377,6 +414,57 @@ class TextPanel(LayerPanel):
             self.update({"font": import_asset(self.doc.template_dir, path, "fonts")})
 
 
+class ShapePanel(LayerPanel):
+    def build_specific(self) -> None:
+        section = self.section("Фігура")
+        section.add_row(
+            "Форма",
+            self.segmented(
+                [("rectangle", "Прямокутник"), ("ellipse", "Еліпс"), ("line", "Лінія")],
+                lambda: self.layer.shape,
+                lambda v: self.update({"shape": v, "stroke_width": self.layer.stroke_width or 1}),
+            ),
+        )
+        width = self.spin(lambda: self.layer.width, lambda v: self.update({"width": v}, "width"), 1, MAX_COORD, " px")
+        height = self.spin(lambda: self.layer.height, lambda v: self.update({"height": v}, "height"), 1, MAX_COORD, " px")
+        height_box = hbox(QLabel("×"), height, stretch_first=False)
+        section.add_row("Розмір", hbox(width, height_box, stretch_first=False))
+        self.visible_when(lambda: self.layer.shape != "line", height_box)
+
+        fill = self.color(lambda: self.layer.fill_color or "#FFFFFF", lambda v: self.update({"fill_color": v}))
+        fill_row = hbox(self.switch(lambda: self.layer.fill_color is not None, self._toggle_fill), fill, stretch_first=False)
+        fill_caption = section.add_row("Заливка", fill_row)
+        self.visible_when(lambda: self.layer.shape != "line", fill_caption, fill_row)
+        self.visible_when(lambda: self.layer.fill_color is not None, fill)
+
+        section.add_row("Колір лінії", self.color(lambda: self.layer.stroke_color, lambda v: self.update({"stroke_color": v})))
+        section.add_row("Товщина", self.spin(lambda: self.layer.stroke_width, lambda v: self.update({"stroke_width": v}, "stroke"), 0, 500, " px"))
+        radius = self.spin(lambda: self.layer.corner_radius, lambda v: self.update({"corner_radius": v}, "radius"), 0, MAX_COORD, " px")
+        radius_caption = section.add_row("Заокруглення", radius)
+        self.visible_when(lambda: self.layer.shape == "rectangle", radius, radius_caption)
+        section.add_full(self.hint("Лінія підійде для місця підпису чи розділювача; поверніть її на 90°, щоб стала вертикальною."))
+
+    def _toggle_fill(self, enabled: bool) -> None:
+        self.update({"fill_color": "#F2F2F7" if enabled else None})
+
+
+class FramePanel(LayerPanel):
+    def build_specific(self) -> None:
+        section = self.section("Рамка")
+        section.add_row(
+            "Стиль",
+            self.segmented(
+                [("gold", "Золота"), ("classic", "Класична"), ("minimal", "Тонка")],
+                lambda: self.layer.style,
+                lambda v: self.update({"style": v}),
+            ),
+        )
+        color = self.color(lambda: self.layer.color, lambda v: self.update({"color": v}))
+        caption = section.add_row("Колір ліній", color)
+        self.visible_when(lambda: self.layer.style != "gold", color, caption)
+        section.add_full(self.hint("Рамка завжди займає всю сторінку й підлаштовується під її розмір."))
+
+
 class QrPanel(LayerPanel):
     def build_specific(self) -> None:
         section = self.section("QR-код")
@@ -397,6 +485,8 @@ PANEL_TYPES = {
     ImageLayer: ImagePanel,
     TextLayer: TextPanel,
     QrLayer: QrPanel,
+    ShapeLayer: ShapePanel,
+    FrameLayer: FramePanel,
 }
 
 

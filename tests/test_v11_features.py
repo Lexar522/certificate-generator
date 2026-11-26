@@ -9,7 +9,7 @@ import pytest
 
 from core.exceptions import CertificateError
 from core.models import CertificateData
-from core.presets import PRESETS, preset_by_key, starter_config
+from core.presets import PRESETS, preset_by_key, starter_assets, starter_config
 from core.template_loader import load_template_config
 from core.template_store import create_template
 from gui import theme
@@ -56,7 +56,9 @@ def test_stylesheet_contains_palette_colors():
 
 @pytest.mark.parametrize("preset", PRESETS, ids=lambda p: p.key)
 def test_every_preset_creates_renderable_template(tmp_path: Path, preset):
-    template_dir = create_template(tmp_path, preset.key, starter_config(preset, preset.title), FONTS)
+    template_dir = create_template(
+        tmp_path, preset.key, starter_config(preset, preset.title), FONTS, starter_assets(preset, FONTS)
+    )
     config = load_template_config(template_dir)
     assert (config.canvas.width, config.canvas.height) == (preset.width, preset.height)
 
@@ -64,7 +66,10 @@ def test_every_preset_creates_renderable_template(tmp_path: Path, preset):
         template_name=preset.key,
         certificate_id="T-1",
         issue_date=date(2026, 6, 30),
-        fields={"full_name": "Іван Петренко", "course_name": "Python"},
+        fields={
+            "full_name": "Іван Петренко", "course_name": "Python", "full_name_en": "Ivan Petrenko",
+            "program": "Python", "program_en": "Python",
+        },
     )
     image = PillowRenderer().compose(data, template_dir, config)
     assert image.size == (preset.width, preset.height)

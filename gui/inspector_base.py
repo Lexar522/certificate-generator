@@ -10,13 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget
 
 from core.exceptions import CertificateError
 from gui.document import EditorDocument
 from gui.widgets import ColorButton, Section, Segmented, SliderField, Switch
 
 SPIN_MIN_WIDTH = 64
+TEXT_AREA_LINES = 3
 
 Getter = Callable[[], Any]
 Setter = Callable[[Any], None]
@@ -29,6 +30,7 @@ class InspectorContext:
     pick_image: Callable[[], Path | None]
     pick_font: Callable[[], Path | None]
     center_layer: Callable[[str, str], None]  # (id, "horizontal" | "vertical")
+    open_canvas_size: Callable[[], None]
 
 
 class Panel(QWidget):
@@ -141,6 +143,25 @@ class Panel(QWidget):
             if widget.text() != value:
                 widget.blockSignals(True)
                 widget.setText(value)
+                widget.blockSignals(False)
+
+        self.on_bind(binder)
+        return widget
+
+    def text_area(self, get: Getter, set_: Setter, placeholder: str = "") -> QPlainTextEdit:
+        """Багаторядкове поле: Enter — новий рядок у тексті сертифіката."""
+        widget = QPlainTextEdit()
+        widget.setPlaceholderText(placeholder)
+        widget.setTabChangesFocus(True)
+        line_height = widget.fontMetrics().lineSpacing()
+        widget.setFixedHeight(line_height * TEXT_AREA_LINES + 16)
+        widget.textChanged.connect(lambda: self.guard(lambda: set_(widget.toPlainText())))
+
+        def binder() -> None:
+            value = get() or ""
+            if widget.toPlainText() != value:
+                widget.blockSignals(True)
+                widget.setPlainText(value)
                 widget.blockSignals(False)
 
         self.on_bind(binder)

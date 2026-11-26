@@ -8,7 +8,8 @@ from typing import Any
 from PIL import Image
 
 from core.exceptions import CertificateError
-from core.models import ImageLayer, QrLayer, TextLayer, WatermarkLayer
+from core.models import FrameLayer, ImageLayer, QrLayer, ShapeLayer, TextLayer, WatermarkLayer
+from core.ornaments import FRAME_STYLES
 from core.template_loader import resolve_template_asset
 from core.template_store import import_asset
 from gui.document import LAYER_TYPES, EditorDocument
@@ -22,6 +23,9 @@ IMAGE_PAGE_FRACTION = 0.2
 QR_PAGE_FRACTION = 1 / 8
 TEXT_PAGE_FRACTION = 1 / 20
 MIN_QR_SIZE, MIN_FONT_SIZE = 120, 24
+SHAPE_PAGE_FRACTION = 0.3
+SHAPE_STROKE_FRACTION = 1 / 400
+FRAME_PREFIX = "frame:"  # "frame:gold" — згенерована рамка на всю сторінку
 DARK_BACKGROUND_SUM = 382  # сума R+G+B, нижче якої фон вважаємо темним
 
 PathPicker = Callable[[], Path | None]
@@ -36,9 +40,13 @@ def new_layer_payload(kind: str, doc: EditorDocument, pick_image: PathPicker, pi
     """Готовий до add_layer опис нового шару по центру сторінки; None — користувач скасував вибір файлу."""
     canvas = doc.config.canvas
     center_x, center_y = canvas.width // 2, canvas.height // 2
+    if kind.startswith(FRAME_PREFIX):
+        return frame_payload(doc, kind.removeprefix(FRAME_PREFIX)) | {"label": _next_label(doc, "frame")}
     label = _next_label(doc, kind)
     if kind == "text":
         payload = _text_payload(doc, center_x, center_y, pick_font)
+    elif kind == "shape":
+        payload = _shape_payload(doc, center_x, center_y)
     elif kind == "qr":
         size = max(MIN_QR_SIZE, round(canvas.width * QR_PAGE_FRACTION))
         payload = {"type": "qr", "size": size, "x": center_x - size // 2, "y": center_y - size // 2}
@@ -56,6 +64,30 @@ def _next_label(doc: EditorDocument, kind: str) -> str:
     while f"{base} {counter}" in existing:
         counter += 1
     return f"{base} {counter}"
+
+
+def frame_payload(doc: EditorDocument, style: str) -> dict:
+    """Рамка на всю сторінку (одразу заблокована, щоб не зсунути випадково)."""
+    if style not in FRAME_STYLES:
+        raise CertificateError(f"Невідомий стиль рамки: {style}")
+    color = "#FFFFFF" if _is_dark(doc.config.canvas.background_color) else "#1F3A5F"
+    return {"type": "frame", "style": style, "color": color, "locked": True}
+
+
+def _shape_payload(doc: EditorDocument, center_x: int, center_y: int) -> dict:
+    canvas = doc.config.canvas
+    width = round(canvas.width * SHAPE_PAGE_FRACTION)
+    height = width // 2
+    return {
+        "type": "shape",
+        "shape": "rectangle",
+        "width": width,
+        "height": height,
+        "stroke_color": "#FFFFFF" if _is_dark(canvas.background_color) else "#1D1D1F",
+        "stroke_width": max(2, round(canvas.width * SHAPE_STROKE_FRACTION)),
+        "x": center_x - width // 2,
+        "y": center_y - height // 2,
+    }
 
 
 def _text_payload(doc: EditorDocument, center_x: int, center_y: int, pick_font: PathPicker) -> dict | None:
@@ -159,6 +191,12 @@ def layer_subtitle(layer: AnyLayer, doc: EditorDocument) -> str:
         return Path(layer.path).name
     if isinstance(layer, WatermarkLayer):
         return f"{Path(layer.path).name} · {round(layer.opacity * 100)}%"
+    if isinstance(layer, FrameLayer):
+        return FRAME_STYLES[layer.style]
+    if isinstance(layer, ShapeLayer):
+        names = {"rectangle": "Прямокутник", "ellipse": "Еліпс", "line": "Лінія"}
+        size = f"{layer.width} px" if layer.shape == "line" else f"{layer.width} × {layer.height}"
+        return f"{names[layer.shape]} · {size}"
     if isinstance(layer, QrLayer):
         return layer.url_template.replace("{certificate_id}", "…").removeprefix("https://")
     return ""
