@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.ornaments import FRAME_STYLES
+from core.frame_builder import FRAME_KINDS
 from gui import theme
 from gui.layer_actions import FRAME_PREFIX
 from gui.qt_utils import TYPE_NAMES, line_icon, type_icon
@@ -171,7 +171,10 @@ class LayersPanel(QWidget):
             action = menu.addAction(type_icon(kind), TYPE_NAMES[kind])
             action.triggered.connect(lambda _=False, k=kind: self.add_requested.emit(k))
         frames = menu.addMenu(type_icon("frame"), "Рамка")
-        for style, title in FRAME_STYLES.items():
+        for style, title in FRAME_KINDS.items():
+            if style == "custom":
+                frames.addSeparator()
+            title = f"{title}…" if style == "image" else title
             frames.addAction(title, lambda s=style: self.add_requested.emit(f"{FRAME_PREFIX}{s}"))
         menu.addSeparator()
         menu.addAction(type_icon("image"), "Фонове зображення…", self.background_image_requested.emit)

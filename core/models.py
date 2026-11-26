@@ -193,12 +193,37 @@ class ShapeLayer(_BaseLayer):
 
 
 class FrameLayer(_BaseLayer):
-    """Декоративна рамка на всю сторінку; малюється під поточний розмір полотна."""
+    """Декоративна рамка на всю сторінку; малюється під поточний розмір полотна.
+
+    style: gold / classic / minimal — готові; custom — конструктор з параметрів нижче;
+    image — власне зображення (PNG), розкладене «дев'ятьма частинами»: кути не розтягуються.
+    Розміри конструктора й рамки-зображення — у відсотках від коротшої сторони сторінки,
+    тож рамка однаково виглядає на сторінці будь-якого розміру.
+    """
 
     type: Literal["frame"]
-    style: Literal["gold", "classic", "minimal"] = "gold"
-    color: HexColor = Field(default="#1F3A5F", description="Колір ліній для стилів classic і minimal")
+    style: Literal["gold", "classic", "minimal", "custom", "image"] = "gold"
+    color: HexColor = Field(default="#1F3A5F", description="Основний колір ліній")
     locked: bool = True
+
+    accent_color: HexColor = Field(default="#B8862B", description="Колір внутрішньої лінії та прикрас кутів")
+    line_count: int = Field(default=2, ge=1, le=3)
+    thickness: float = Field(default=0.6, ge=0.05, le=5.0)
+    margin: float = Field(default=3.0, ge=0.0, le=20.0, description="Відступ від краю сторінки")
+    gap: float = Field(default=1.0, ge=0.1, le=10.0, description="Відстань між лініями")
+    corner: Literal["none", "diamond", "circle", "square", "bracket"] = "diamond"
+    corner_size: float = Field(default=3.0, ge=0.5, le=10.0)
+    band_color: HexColor | None = Field(default=None, description="Суцільна смуга від краю до першої лінії")
+
+    path: RelativePath | None = Field(default=None, description="Зображення рамки для style=image")
+    border: float = Field(default=6.0, ge=1.0, le=25.0, description="Ширина рамки-зображення на сторінці")
+    slice: float = Field(default=25.0, ge=1.0, le=49.0, description="Яка частка зображення — кути й краї")
+
+    @model_validator(mode="after")
+    def _image_needs_path(self) -> "FrameLayer":
+        if self.style == "image" and self.path is None:
+            raise ValueError("для рамки із зображення потрібен файл (path)")
+        return self
 
 
 Layer = Annotated[

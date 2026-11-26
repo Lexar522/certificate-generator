@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPlainTextEdit, QSpinBox, QVBoxLayout, QWidget
 
 from core.exceptions import CertificateError
 from gui.document import EditorDocument
@@ -183,6 +183,23 @@ class Panel(QWidget):
         widget = Switch()
         widget.clicked.connect(lambda checked: self.guard(lambda: set_(checked)))
         self.on_bind(lambda: widget.setChecked(bool(get())))
+        return widget
+
+    def combo(self, options: dict[str, str], get: Getter, set_: Setter) -> QComboBox:
+        """Список значень: options — {значення: підпис}."""
+        widget = QComboBox()
+        for value, label in options.items():
+            widget.addItem(label, value)
+        widget.currentIndexChanged.connect(
+            lambda index: self.guard(lambda: set_(widget.itemData(index))) if index >= 0 else None
+        )
+
+        def binder() -> None:
+            widget.blockSignals(True)
+            widget.setCurrentIndex(max(0, widget.findData(get())))
+            widget.blockSignals(False)
+
+        self.on_bind(binder)
         return widget
 
     def caption(self, get: Getter) -> QLabel:

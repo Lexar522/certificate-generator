@@ -1,12 +1,13 @@
 """Можливості версії 1.2: фігури, багаторядковий і підкреслений текст, рамки,
 класична двомовна заготовка та зміна розміру полотна."""
 
+import os
 import shutil
 from datetime import date
 from pathlib import Path
 
 import pytest
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 from pydantic import ValidationError
 
 from core.classic_preset import FIELD_LABELS
@@ -18,7 +19,7 @@ from core.template_catalog import PLACEHOLDER_RE, describe_inputs
 from core.template_loader import load_template_config
 from core.template_store import create_template
 from gui.document import EditorDocument
-from gui.layer_actions import frame_payload, layer_subtitle, new_layer_payload
+from gui.layer_actions import frame_payload, layer_subtitle, layer_to_clipboard, new_layer_payload, paste_payload
 from gui.layout_ops import resize_changes
 from gui.page_size import CUSTOM_FORMAT, detect_format, format_by_key, format_pixels, px_to_mm, resized_layers
 from renderers.pillow_renderer import PillowRenderer, RenderContext
@@ -257,3 +258,83 @@ def test_new_shape_layer_is_centered(classic_dir: Path):
     layer = doc.layer(doc.add_layer(payload))
     assert abs(layer.x + layer.width / 2 - doc.config.canvas.width / 2) <= 1
     assert layer_subtitle(layer, doc).startswith("Прямокутник")
+
+
+# --------------------------- власні рамки --------------------------- #
+
+EXAMPLE_FRAME = PROJECT_ROOT / "examples" / "frame_art_deco.png"
+
+
+def _frame_context(tmp_path: Path, size=(600, 400)) -> RenderContext:
+    context = _context(tmp_path)
+    canvas = context.config.canvas.model_copy(update={"width": size[0], "height": size[1]})
+    return RenderContext(DATA, tmp_path, context.config.model_copy(update={"canvas": canvas}))
+
+
+@pytest.mark.parametrize("corner", ["none", "diamond", "circle", "square", "bracket"])
+def test_custom_frame_fills_page_and_keeps_center_clear(tmp_path: Path, corner):
+    layer = FrameLayer(id="f", type="frame", style="custom", corner=corner, line_count=3)
+    sprite = PillowRenderer().render_layer(layer, _frame_context(tmp_path))
+    assert sprite.image.size == (600, 400)
+    assert sprite.image.getpixel((300, 200))[3] == 0
+
+
+def test_custom_frame_band_paints_page_edge(tmp_path: Path):
+    layer = FrameLayer(id="f", type="frame", style="custom", band_color="#FF0000", margin=5)
+    image = PillowRenderer().render_layer(layer, _frame_context(tmp_path)).image
+    assert image.getpixel((2, 200))[:3] == (255, 0, 0)
+
+
+def test_image_frame_requires_file():
+    with pytest.raises(ValidationError, match="файл"):
+        FrameLayer(id="f", type="frame", style="image")
+
+
+@pytest.mark.parametrize("size", [(600, 400), (400, 600)])
+def test_image_frame_keeps_corners_and_transparent_middle(tmp_path: Path, size):
+    shutil.copy(EXAMPLE_FRAME, tmp_path / "frame.png")
+    layer = FrameLayer(id="f", type="frame", style="image", path="frame.png", border=10, slice=25)
+    image = PillowRenderer().render_layer(layer, _frame_context(tmp_path, size)).image
+    band = round(min(size) * 0.10)
+    with Image.open(EXAMPLE_FRAME) as src:
+        cut = src.width // 4
+        expected = src.convert("RGBA").crop((0, 0, cut, cut)).resize((band, band), Image.Resampling.LANCZOS)
+    assert image.size == size
+    # Форма кута збігається; колір майже прозорих пікселів може відрізнятися через округлення.
+    difference = ImageChops.difference(image.crop((0, 0, band, band)).getchannel("A"), expected.getchannel("A"))
+    assert difference.getextrema()[1] <= 2
+    assert image.getpixel((size[0] // 2, size[1] // 2))[3] == 0
+
+
+def test_image_frame_redraws_after_file_change(tmp_path: Path):
+    Image.new("RGBA", (40, 40), (255, 0, 0, 255)).save(tmp_path / "frame.png")
+    layer = FrameLayer(id="f", type="frame", style="image", path="frame.png", border=10)
+    renderer, context = PillowRenderer(), _frame_context(tmp_path)
+    assert renderer.render_layer(layer, context).image.getpixel((1, 1))[:3] == (255, 0, 0)
+    Image.new("RGBA", (40, 40), (0, 0, 255, 255)).save(tmp_path / "frame.png")
+    os.utime(tmp_path / "frame.png", ns=(1, 10**18))
+    assert renderer.render_layer(layer, context).image.getpixel((1, 1))[:3] == (0, 0, 255)
+
+
+def test_missing_frame_image_is_reported(tmp_path: Path):
+    layer = FrameLayer(id="f", type="frame", style="image", path="nope.png")
+    with pytest.raises(CertificateError):
+        PillowRenderer().render_layer(layer, _frame_context(tmp_path))
+
+
+def test_image_frame_payload_imports_file_or_cancels(classic_dir: Path):
+    doc = EditorDocument(classic_dir)
+    assert frame_payload(doc, "image", lambda: None) is None
+    payload = frame_payload(doc, "image", lambda: EXAMPLE_FRAME)
+    assert (classic_dir / payload["path"]).is_file()
+    layer = doc.layer(doc.add_layer(payload, 0))
+    assert layer.style == "image" and layer.locked
+
+
+def test_image_frame_survives_paste_into_other_template(classic_dir: Path, tmp_path: Path):
+    source = EditorDocument(classic_dir)
+    layer_id = source.add_layer(frame_payload(source, "image", lambda: EXAMPLE_FRAME))
+    other = create_template(tmp_path / "t2", "blank", starter_config(preset_by_key("landscape_light"), "X"), FONTS)
+    target = EditorDocument(other)
+    pasted = target.layer(target.add_layer(paste_payload(layer_to_clipboard(source.layer(layer_id), source), target)))
+    assert (other / pasted.path).is_file()

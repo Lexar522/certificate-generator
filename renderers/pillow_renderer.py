@@ -29,7 +29,7 @@ from core.models import (
     TextLayer,
     WatermarkLayer,
 )
-from core.ornaments import frame_image
+from core.frame_builder import build_frame
 from core.template_catalog import PLACEHOLDER_RE
 from core.template_loader import load_template_config, resolve_template_asset
 from renderers.base import BaseRenderer
@@ -211,7 +211,14 @@ class PillowRenderer(BaseRenderer):
 
     def _frame_sprite(self, layer: FrameLayer, context: RenderContext) -> LayerSprite:
         canvas = context.config.canvas
-        return LayerSprite(cached_frame(canvas.width, canvas.height, layer.style, layer.color), layer.x, layer.y)
+        source_key = None
+        if layer.style == "image":
+            path = resolve_template_asset(context.template_dir, layer.path)
+            if not path.is_file():
+                raise AssetNotFoundError(layer.id, path)
+            source_key = (str(path), path.stat().st_mtime_ns)  # заміна файлу скидає кеш
+        image = cached_frame(canvas.width, canvas.height, _frame_spec(layer), source_key)
+        return LayerSprite(image, layer.x, layer.y)
 
     def _qr_sprite(self, layer: QrLayer, context: RenderContext) -> LayerSprite:
         url = layer.url_template.replace("{certificate_id}", context.data.certificate_id)
@@ -337,12 +344,25 @@ def open_rgba(path: Path, layer_id: str) -> Image.Image:
 
 
 @lru_cache(maxsize=FRAME_CACHE_SIZE)
-def cached_frame(width: int, height: int, style: str, color: str) -> Image.Image:
+def cached_frame(
+    width: int, height: int, spec: FrameLayer, source_key: tuple[str, int] | None
+) -> Image.Image:
     """Рамка малюється помітний час, а в пакетній генерації однакова для всіх сертифікатів.
 
     Зображення спільне для викликів, тож його ніхто не змінює: композиція завжди працює з копіями.
     """
-    return frame_image(width, height, style, color)
+    source = open_rgba(Path(source_key[0]), spec.id) if source_key else None
+    try:
+        return build_frame(width, height, spec, source)
+    except ValueError as exc:
+        raise RenderError(f"Рамка: {exc}") from exc
+
+
+def _frame_spec(layer: FrameLayer) -> FrameLayer:
+    """Лише властивості, що впливають на вигляд рамки — переміщення чи прозорість не скидають кеш."""
+    return layer.model_copy(
+        update={"id": "frame", "label": None, "x": 0, "y": 0, "opacity": 1.0, "rotation": 0.0, "locked": True}
+    )
 
 
 @lru_cache(maxsize=128)

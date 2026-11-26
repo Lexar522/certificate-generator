@@ -9,7 +9,7 @@ from PIL import Image
 
 from core.exceptions import CertificateError
 from core.models import FrameLayer, ImageLayer, QrLayer, ShapeLayer, TextLayer, WatermarkLayer
-from core.ornaments import FRAME_STYLES
+from core.frame_builder import FRAME_KINDS
 from core.template_loader import resolve_template_asset
 from core.template_store import import_asset
 from gui.document import LAYER_TYPES, EditorDocument
@@ -41,7 +41,8 @@ def new_layer_payload(kind: str, doc: EditorDocument, pick_image: PathPicker, pi
     canvas = doc.config.canvas
     center_x, center_y = canvas.width // 2, canvas.height // 2
     if kind.startswith(FRAME_PREFIX):
-        return frame_payload(doc, kind.removeprefix(FRAME_PREFIX)) | {"label": _next_label(doc, "frame")}
+        payload = frame_payload(doc, kind.removeprefix(FRAME_PREFIX), pick_image)
+        return None if payload is None else payload | {"label": _next_label(doc, "frame")}
     label = _next_label(doc, kind)
     if kind == "text":
         payload = _text_payload(doc, center_x, center_y, pick_font)
@@ -66,12 +67,19 @@ def _next_label(doc: EditorDocument, kind: str) -> str:
     return f"{base} {counter}"
 
 
-def frame_payload(doc: EditorDocument, style: str) -> dict:
-    """Рамка на всю сторінку (одразу заблокована, щоб не зсунути випадково)."""
-    if style not in FRAME_STYLES:
+def frame_payload(doc: EditorDocument, style: str, pick_image: PathPicker | None = None) -> dict | None:
+    """Рамка на всю сторінку (одразу заблокована, щоб не зсунути випадково).
+
+    style="image" — спершу вибір PNG-рамки; None — користувач скасував вибір.
+    """
+    if style not in FRAME_KINDS:
         raise CertificateError(f"Невідомий стиль рамки: {style}")
     color = "#FFFFFF" if _is_dark(doc.config.canvas.background_color) else "#1F3A5F"
-    return {"type": "frame", "style": style, "color": color, "locked": True}
+    payload = {"type": "frame", "style": style, "color": color, "locked": True}
+    if style != "image":
+        return payload
+    path = pick_image() if pick_image else None
+    return None if path is None else payload | {"path": import_asset(doc.template_dir, path, "assets")}
 
 
 def _shape_payload(doc: EditorDocument, center_x: int, center_y: int) -> dict:
@@ -192,7 +200,7 @@ def layer_subtitle(layer: AnyLayer, doc: EditorDocument) -> str:
     if isinstance(layer, WatermarkLayer):
         return f"{Path(layer.path).name} · {round(layer.opacity * 100)}%"
     if isinstance(layer, FrameLayer):
-        return FRAME_STYLES[layer.style]
+        return FRAME_KINDS[layer.style]
     if isinstance(layer, ShapeLayer):
         names = {"rectangle": "Прямокутник", "ellipse": "Еліпс", "line": "Лінія"}
         size = f"{layer.width} px" if layer.shape == "line" else f"{layer.width} × {layer.height}"
@@ -209,7 +217,12 @@ def layer_subtitle(layer: AnyLayer, doc: EditorDocument) -> str:
 CLIPBOARD_MIME = "application/x-certificate-layer"
 PASTE_OFFSET = 40
 MAX_CLIPBOARD_BYTES = 256 * 1024
-_ASSET_FIELDS = {"image": ("path", "assets"), "watermark": ("path", "assets"), "text": ("font", "fonts")}
+_ASSET_FIELDS = {
+    "image": ("path", "assets"),
+    "watermark": ("path", "assets"),
+    "frame": ("path", "assets"),
+    "text": ("font", "fonts"),
+}
 
 
 def layer_to_clipboard(layer: AnyLayer, doc: EditorDocument) -> bytes:

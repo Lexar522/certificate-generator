@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QComboBox, QDateEdit, QHBoxLayout, QLabel, QPushBu
 
 from core.exceptions import CertificateError
 from core.models import FrameLayer, ImageLayer, QrLayer, ShapeLayer, TextLayer, WatermarkLayer
+from core.frame_builder import CORNER_STYLES, FRAME_KINDS
 from core.ornaments import honeycomb_background
 from core.template_store import import_asset, save_generated_asset
 from gui import theme
@@ -451,18 +452,66 @@ class ShapePanel(LayerPanel):
 class FramePanel(LayerPanel):
     def build_specific(self) -> None:
         section = self.section("Рамка")
-        section.add_row(
-            "Стиль",
-            self.segmented(
-                [("gold", "Золота"), ("classic", "Класична"), ("minimal", "Тонка")],
-                lambda: self.layer.style,
-                lambda v: self.update({"style": v}),
-            ),
-        )
+        section.add_row("Стиль", self.combo(FRAME_KINDS, lambda: self.layer.style, self._set_style))
         color = self.color(lambda: self.layer.color, lambda v: self.update({"color": v}))
         caption = section.add_row("Колір ліній", color)
-        self.visible_when(lambda: self.layer.style != "gold", color, caption)
+        self.visible_when(lambda: self.layer.style not in ("gold", "image"), color, caption)
         section.add_full(self.hint("Рамка завжди займає всю сторінку й підлаштовується під її розмір."))
+        self._build_constructor()
+        self._build_image()
+
+    def _set_style(self, style: str) -> None:
+        if style == "image" and self.layer.path is None:
+            relative = self.import_image()
+            if relative is None:
+                self.bind()
+                return
+            self.update({"style": "image", "path": relative})
+            return
+        self.update({"style": style})
+
+    def _build_constructor(self) -> None:
+        section = self.section("Конструктор")
+        section.add_row("Лінії", self.segmented([("1", "Одна"), ("2", "Дві"), ("3", "Три")],
+                                                lambda: str(self.layer.line_count),
+                                                lambda v: self.update({"line_count": int(v)})))
+        section.add_row("Другий колір", self.color(lambda: self.layer.accent_color,
+                                                   lambda v: self.update({"accent_color": v})))
+        section.add_row("Товщина", self._percent("thickness", 0.05, 3))
+        section.add_row("Відступ від краю", self._percent("margin", 0, 12))
+        section.add_row("Між лініями", self._percent("gap", 0.1, 5))
+        section.add_row("Кути", self.combo(CORNER_STYLES, lambda: self.layer.corner, lambda v: self.update({"corner": v})))
+        section.add_row("Розмір кутів", self._percent("corner_size", 0.5, 8))
+        band = self.color(lambda: self.layer.band_color or "#F3E9D2", lambda v: self.update({"band_color": v}))
+        band_row = hbox(self.switch(lambda: self.layer.band_color is not None,
+                                    lambda on: self.update({"band_color": "#F3E9D2" if on else None})),
+                        band, stretch_first=False)
+        section.add_row("Смуга по краю", band_row)
+        self.visible_when(lambda: self.layer.band_color is not None, band)
+        self.visible_when(lambda: self.layer.style == "custom", section)
+        section.add_full(self.hint("Розміри — у відсотках від коротшої сторони сторінки, тож рамка "
+                                   "виглядає однаково на A4, A5 чи квадраті."))
+
+    def _build_image(self) -> None:
+        section = self.section("Зображення рамки")
+        replace = QPushButton("Замінити…")
+        replace.clicked.connect(lambda: self.guard(self._replace_image))
+        section.add_row("Файл", hbox(self.caption(lambda: _file_name(self.layer.path, "—")), replace))
+        section.add_row("Ширина рамки", self._percent("border", 1, 20))
+        section.add_row("Кути й краї", self._percent("slice", 5, 49))
+        section.add_full(self.hint(
+            "Підійде PNG з прозорою серединою. Кути переносяться без спотворень, краї повторюються "
+            "плитками. «Кути й краї» — яку частину картинки вважати рамкою."))
+        self.visible_when(lambda: self.layer.style == "image", section)
+
+    def _replace_image(self) -> None:
+        relative = self.import_image()
+        if relative:
+            self.update({"path": relative, "style": "image"})
+
+    def _percent(self, prop: str, minimum: float, maximum: float):
+        return self.slider(lambda: getattr(self.layer, prop), lambda v: self.update({prop: v}, prop),
+                           minimum, maximum, 100, " %", 1)  # значення вже у відсотках
 
 
 class QrPanel(LayerPanel):
